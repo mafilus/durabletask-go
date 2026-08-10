@@ -1,0 +1,103 @@
+name: PostgreSQL durability lab
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_pattern:
+        description: Go test pattern passed to -run
+        required: false
+        default: ""
+        type: string
+      timeout_minutes:
+        description: Job timeout in minutes
+        required: false
+        default: "20"
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  PGHOST: 127.0.0.1
+  PGPORT: "5432"
+  PGUSER: postgres
+  PGPASSWORD: postgres
+  PGDATABASE: durabletask
+  POSTGRES_CONNECTION_STRING: postgres://postgres:postgres@127.0.0.1:5432/durabletask?sslmode=disable
+
+jobs:
+  postgres-durability:
+    name: PostgreSQL durability tests
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ fromJSON(inputs.timeout_minutes) }}
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: durabletask
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d durabletask"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Prepare diagnostics
+        run: mkdir -p artifacts
+
+      - name: Record environment
+        shell: bash
+        run: |
+          {
+            echo "commit=${GITHUB_SHA}"
+            echo "runner=${RUNNER_OS} ${RUNNER_ARCH}"
+            go version
+            psql --version
+            pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE"
+          } | tee artifacts/environment.txt
+
+      - name: Run PostgreSQL durability tests
+        shell: bash
+        run: |
+          set -o pipefail
+          args=(./backend/postgres/... -count=1 -v)
+          if [[ -n "${{ inputs.test_pattern }}" ]]; then
+            args+=( -run "${{ inputs.test_pattern }}" )
+          fi
+          go test "${args[@]}" 2>&1 | tee artifacts/go-test.log
+
+      - name: Capture PostgreSQL diagnostics
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "=== pg_stat_activity ==="
+            psql -X -v ON_ERROR_STOP=0 -c "SELECT pid, state, wait_event_type, wait_event, query_start, left(query, 300) AS query FROM pg_stat_activity WHERE datname = current_database() ORDER BY pid;"
+            echo
+            echo "=== durabletask tables ==="
+            psql -X -v ON_ERROR_STOP=0 -c "SELECT schemaname, tablename FROM pg_tables WHERE schemaname NOT IN ('pg_catalog', 'information_schema') ORDER BY schemaname, tablename;"
+          } > artifacts/postgres.txt 2>&1 || true
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-durability-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 1
+          compression-level: 9
