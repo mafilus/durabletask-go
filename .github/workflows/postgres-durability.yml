@@ -86,8 +86,8 @@ jobs:
         if: ${{ inputs.suite == 'stress-patched' }}
         shell: bash
         run: |
-          git apply --check patches/DTGO-2026-004-postgres-activity-dequeue.patch
-          git apply patches/DTGO-2026-004-postgres-activity-dequeue.patch
+          git apply --check patches/postgres-activity-dequeue-skip-locked.patch
+          git apply patches/postgres-activity-dequeue-skip-locked.patch
           git diff -- backend/postgres/postgres.go | tee artifacts/applied-patch.diff
 
       - name: Run PostgreSQL durability tests
