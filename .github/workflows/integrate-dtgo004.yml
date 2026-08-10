@@ -1,0 +1,39 @@
+name: Integrate DTGO-2026-004
+
+on:
+  push:
+    branches:
+      - strix/postgres-durability-tests
+    paths:
+      - .github/workflows/integrate-dtgo004.yml
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: strix/postgres-durability-tests
+          fetch-depth: 0
+
+      - name: Apply validated PostgreSQL dequeue fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -q 'FOR UPDATE SKIP LOCKED' backend/postgres/postgres.go; then
+            echo 'Patch already integrated.'
+            exit 0
+          fi
+          git apply --check patches/DTGO-2026-004-postgres-activity-dequeue-fixed.patch
+          git apply patches/DTGO-2026-004-postgres-activity-dequeue-fixed.patch
+          git diff --check
+          git diff -- backend/postgres/postgres.go
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add backend/postgres/postgres.go
+          git commit -m 'fix(postgres): make activity dequeue exclusive'
+          git push origin HEAD:strix/postgres-durability-tests
