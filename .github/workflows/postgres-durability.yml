@@ -12,6 +12,7 @@ on:
           - guarantees
           - known-defects
           - stress
+          - stress-patched
           - all
       test_pattern:
         description: Optional Go -run override (takes precedence over suite)
@@ -81,6 +82,14 @@ jobs:
             pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE"
           } | tee artifacts/environment.txt
 
+      - name: Apply candidate dequeue fix
+        if: ${{ inputs.suite == 'stress-patched' }}
+        shell: bash
+        run: |
+          git apply --check patches/DTGO-2026-004-postgres-activity-dequeue.patch
+          git apply patches/DTGO-2026-004-postgres-activity-dequeue.patch
+          git diff -- backend/postgres/postgres.go | tee artifacts/applied-patch.diff
+
       - name: Run PostgreSQL durability tests
         shell: bash
         run: |
@@ -96,7 +105,7 @@ jobs:
                 pattern='^TestKnownDefect'
                 export STRIX_RUN_KNOWN_DEFECTS=1
                 ;;
-              stress)
+              stress|stress-patched)
                 pattern='^TestStress'
                 ;;
               all)
