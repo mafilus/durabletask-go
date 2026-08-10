@@ -3,8 +3,18 @@ name: PostgreSQL durability lab
 on:
   workflow_dispatch:
     inputs:
+      suite:
+        description: Durability test category
+        required: true
+        default: guarantees
+        type: choice
+        options:
+          - guarantees
+          - known-defects
+          - stress
+          - all
       test_pattern:
-        description: Go test pattern passed to -run
+        description: Optional Go -run override (takes precedence over suite)
         required: false
         default: ""
         type: string
@@ -27,7 +37,7 @@ env:
 
 jobs:
   postgres-durability:
-    name: PostgreSQL durability tests
+    name: PostgreSQL ${{ inputs.suite }}
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(inputs.timeout_minutes) }}
 
@@ -64,6 +74,7 @@ jobs:
         run: |
           {
             echo "commit=${GITHUB_SHA}"
+            echo "suite=${{ inputs.suite }}"
             echo "runner=${RUNNER_OS} ${RUNNER_ARCH}"
             go version
             psql --version
@@ -74,10 +85,35 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          args=(./backend/postgres/... -count=1 -v)
-          if [[ -n "${{ inputs.test_pattern }}" ]]; then
-            args+=( -run "${{ inputs.test_pattern }}" )
+          pattern="${{ inputs.test_pattern }}"
+
+          if [[ -z "$pattern" ]]; then
+            case "${{ inputs.suite }}" in
+              guarantees)
+                pattern='^(TestActivityRedeliveredAfterLeaseExpiryAndStaleCompletionRollsBack|TestWorkflowRedeliveredAfterLeaseExpiry|TestDurableTimerSurvivesBackendRestart)$'
+                ;;
+              known-defects)
+                pattern='^TestKnownDefect'
+                export STRIX_RUN_KNOWN_DEFECTS=1
+                ;;
+              stress)
+                pattern='^TestStress'
+                ;;
+              all)
+                pattern=''
+                export STRIX_RUN_KNOWN_DEFECTS=1
+                ;;
+            esac
+          elif [[ "${{ inputs.suite }}" == "known-defects" || "${{ inputs.suite }}" == "all" ]]; then
+            export STRIX_RUN_KNOWN_DEFECTS=1
           fi
+
+          args=(./backend/postgres/... -count=1 -v)
+          if [[ -n "$pattern" ]]; then
+            args+=( -run "$pattern" )
+          fi
+
+          echo "suite=${{ inputs.suite }} pattern=${pattern:-<all>}" | tee artifacts/selection.txt
           go test "${args[@]}" 2>&1 | tee artifacts/go-test.log
 
       - name: Capture PostgreSQL diagnostics
@@ -96,7 +132,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: postgres-durability-${{ github.run_id }}-${{ github.run_attempt }}
+          name: postgres-${{ inputs.suite }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/
           if-no-files-found: warn
           retention-days: 1
