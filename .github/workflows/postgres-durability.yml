@@ -13,6 +13,7 @@ on:
           - known-defects
           - stress
           - stress-patched
+          - integrate-dtgo004
           - all
       test_pattern:
         description: Optional Go -run override (takes precedence over suite)
@@ -26,7 +27,7 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   PGHOST: 127.0.0.1
@@ -60,6 +61,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -83,11 +86,14 @@ jobs:
           } | tee artifacts/environment.txt
 
       - name: Apply candidate dequeue fix
-        if: ${{ inputs.suite == 'stress-patched' }}
+        if: ${{ inputs.suite == 'stress-patched' || inputs.suite == 'integrate-dtgo004' }}
         shell: bash
         run: |
-          git apply --check patches/postgres-activity-dequeue-skip-locked.patch
-          git apply patches/postgres-activity-dequeue-skip-locked.patch
+          if ! grep -q 'FOR UPDATE SKIP LOCKED' backend/postgres/postgres.go; then
+            git apply --check patches/postgres-activity-dequeue-skip-locked.patch
+            git apply patches/postgres-activity-dequeue-skip-locked.patch
+          fi
+          git diff --check
           git diff -- backend/postgres/postgres.go | tee artifacts/applied-patch.diff
 
       - name: Run PostgreSQL durability tests
@@ -105,7 +111,7 @@ jobs:
                 pattern='^TestKnownDefect'
                 export STRIX_RUN_KNOWN_DEFECTS=1
                 ;;
-              stress|stress-patched)
+              stress|stress-patched|integrate-dtgo004)
                 pattern='^TestStress'
                 ;;
               all)
@@ -124,6 +130,20 @@ jobs:
 
           echo "suite=${{ inputs.suite }} pattern=${pattern:-<all>}" | tee artifacts/selection.txt
           go test "${args[@]}" 2>&1 | tee artifacts/go-test.log
+
+      - name: Commit validated dequeue fix
+        if: ${{ inputs.suite == 'integrate-dtgo004' }}
+        shell: bash
+        run: |
+          if git diff --quiet -- backend/postgres/postgres.go; then
+            echo 'DTGO-2026-004 fix already integrated.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add backend/postgres/postgres.go
+          git commit -m 'fix(postgres): make activity dequeue exclusive'
+          git push origin HEAD:${GITHUB_REF_NAME}
 
       - name: Capture PostgreSQL diagnostics
         if: always()
