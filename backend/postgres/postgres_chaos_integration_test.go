@@ -1,4 +1,4 @@
-//go:build integration
+//go:build integration && postgreschaos
 
 package postgres
 
@@ -202,6 +202,64 @@ FOR EACH STATEMENT EXECUTE FUNCTION `+functionName+`()`); err != nil {
 	}
 	if redelivered.InstanceID != wi.InstanceID || len(redelivered.NewEvents) != 1 || redelivered.NewEvents[0].GetEventId() != 1 {
 		t.Fatalf("redelivery after PostgreSQL restart during completion=%+v, want original workflow event", redelivered)
+	}
+}
+
+func TestIntegrationPostgresRestartAfterWorkflowCommitBeforeAcknowledgement(t *testing.T) {
+	requirePostgresChaos(t)
+
+	ctx := context.Background()
+	workerA := newDurabilityBackend(t, 15*time.Second, 15*time.Second)
+	resetDurabilityTables(t, ctx, workerA)
+	insertWorkflowWithEvent(t, ctx, workerA, durabilityInstanceID, nil, 1)
+	wi, err := workerA.GetWorkflowWorkItem(ctx)
+	if err != nil {
+		t.Fatalf("worker A failed to acquire workflow: %v", err)
+	}
+	wi.State = &protos.WorkflowRuntimeState{
+		InstanceId: string(wi.InstanceID),
+		NewEvents:  []*protos.HistoryEvent{historyEvent(2)},
+	}
+
+	committed := make(chan struct{})
+	allowReturn := make(chan struct{})
+	previousHook := afterWorkflowCompletionCommitHook
+	afterWorkflowCompletionCommitHook = func() {
+		close(committed)
+		<-allowReturn
+	}
+	t.Cleanup(func() {
+		afterWorkflowCompletionCommitHook = previousHook
+	})
+
+	completed := make(chan error, 1)
+	go func() {
+		completed <- workerA.CompleteWorkflowWorkItem(ctx, wi)
+	}()
+	select {
+	case <-committed:
+	case <-time.After(15 * time.Second):
+		t.Fatal("workflow completion did not reach the post-COMMIT hook")
+	}
+
+	restartPostgresChaos(t)
+	close(allowReturn)
+	if err := <-completed; err != nil {
+		t.Fatalf("completion failed after its committed transaction survived PostgreSQL restart: %v", err)
+	}
+
+	workerB := newDurabilityBackend(t, 15*time.Second, 15*time.Second)
+	if err := workerB.CompleteWorkflowWorkItem(ctx, wi); err == nil {
+		t.Fatal("retry of a committed workflow completion succeeded after PostgreSQL restart")
+	}
+	if got := countRows(t, ctx, workerB, "History"); got != 1 {
+		t.Fatalf("history rows after stale completion retry=%d, want 1", got)
+	}
+	if got := countRows(t, ctx, workerB, "NewEvents"); got != 0 {
+		t.Fatalf("queued events after stale completion retry=%d, want 0", got)
+	}
+	if _, err := workerB.GetWorkflowWorkItem(ctx); !errors.Is(err, errNoWorkItems) {
+		t.Fatalf("workflow item after stale completion retry: %v, want %v", err, errNoWorkItems)
 	}
 }
 
