@@ -996,6 +996,8 @@ func (be *postgresBackend) GetWorkflowWorkItem(ctx context.Context) (*backend.Wo
 				SELECT 1 FROM NewEvents E
 				WHERE E.InstanceID = I.InstanceID AND (E.VisibleTime IS NULL OR E.VisibleTime < $4)
 			)
+			ORDER BY I.SequenceNumber ASC
+			FOR UPDATE SKIP LOCKED
 			LIMIT 1
 		) RETURNING InstanceID`,
 		be.workerName,     // LockedBy for Instances table
