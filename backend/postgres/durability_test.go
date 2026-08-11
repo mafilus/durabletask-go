@@ -3,9 +3,13 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -70,6 +74,73 @@ func TestActivityRedeliveredAfterLeaseExpiryAndStaleCompletionRollsBack(t *testi
 	}
 	if got := countRows(t, ctx, workerB, "NewEvents"); got != 1 {
 		t.Fatalf("activity result count=%d, want 1", got)
+	}
+}
+
+func TestActivityLeaseExpiryCanOverlapExternalExecutions(t *testing.T) {
+	ctx := context.Background()
+	const lease = 80 * time.Millisecond
+	workerA := newDurabilityBackend(t, lease, lease)
+	resetDurabilityTables(t, ctx, workerA)
+	workerB := newDurabilityBackend(t, lease, lease)
+
+	var externalEffects atomic.Int32
+	effectServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		externalEffects.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(effectServer.Close)
+
+	insertActivity(t, ctx, workerA, durabilityInstanceID, 1)
+	first, err := workerA.getActivityWorkItem(ctx)
+	if err != nil {
+		t.Fatalf("worker A failed to acquire activity: %v", err)
+	}
+
+	effectStarted := make(chan struct{})
+	allowFirstCompletion := make(chan struct{})
+	firstCompletion := make(chan error, 1)
+	go func() {
+		if err := invokeExternalEffect(effectServer.URL); err != nil {
+			firstCompletion <- err
+			return
+		}
+		close(effectStarted)
+		<-allowFirstCompletion
+		first.Result = historyEvent(101)
+		firstCompletion <- workerA.CompleteActivityWorkItem(ctx, first)
+	}()
+	<-effectStarted
+
+	time.Sleep(2 * lease)
+	second, err := workerB.getActivityWorkItem(ctx)
+	if err != nil {
+		t.Fatalf("worker B failed to acquire activity while worker A was still executing: %v", err)
+	}
+	if second.SequenceNumber != first.SequenceNumber {
+		t.Fatalf("overlapping delivery selected sequence=%d, want %d", second.SequenceNumber, first.SequenceNumber)
+	}
+	if err := invokeExternalEffect(effectServer.URL); err != nil {
+		t.Fatalf("worker B external effect: %v", err)
+	}
+	if got := externalEffects.Load(); got != 2 {
+		t.Fatalf("external effects while worker A is still active=%d, want 2", got)
+	}
+
+	second.Result = historyEvent(102)
+	if err := workerB.CompleteActivityWorkItem(ctx, second); err != nil {
+		t.Fatalf("worker B failed to complete redelivered activity: %v", err)
+	}
+	close(allowFirstCompletion)
+	if err := <-firstCompletion; !errors.Is(err, backend.ErrWorkItemLockLost) {
+		t.Fatalf("worker A completion error=%v, want %v", err, backend.ErrWorkItemLockLost)
+	}
+
+	if got := countRows(t, ctx, workerB, "NewTasks"); got != 0 {
+		t.Fatalf("completed activity remains queued: NewTasks count=%d", got)
+	}
+	if got := countRows(t, ctx, workerB, "NewEvents"); got != 1 {
+		t.Fatalf("activity results=%d, want 1 from current lease owner", got)
 	}
 }
 
@@ -338,6 +409,18 @@ func historyEvent(id int32) *protos.HistoryEvent {
 		EventId:   id,
 		Timestamp: timestamppb.Now(),
 	}
+}
+
+func invokeExternalEffect(effectURL string) error {
+	response, err := http.Post(effectURL, "text/plain", nil)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("external effect status=%d, want %d", response.StatusCode, http.StatusNoContent)
+	}
+	return nil
 }
 
 func getenv(name, fallback string) string {
