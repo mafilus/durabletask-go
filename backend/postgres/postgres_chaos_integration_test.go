@@ -5,8 +5,11 @@ package postgres
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -47,6 +50,53 @@ func TestIntegrationPostgresRestartDuringWorkflowLease(t *testing.T) {
 	}
 	if len(redelivered.NewEvents) != 1 || redelivered.NewEvents[0].GetEventId() != 1 {
 		t.Fatalf("redelivery events=%v, want original event ID 1", redelivered.NewEvents)
+	}
+}
+
+func TestIntegrationPostgresRestartAfterExternalActivityEffectIsRedelivered(t *testing.T) {
+	requirePostgresChaos(t)
+
+	var externalEffects atomic.Int32
+	effectServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		externalEffects.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(effectServer.Close)
+
+	ctx := context.Background()
+	const lease = 15 * time.Second
+	workerA := newDurabilityBackend(t, lease, lease)
+	resetDurabilityTables(t, ctx, workerA)
+	insertActivity(t, ctx, workerA, durabilityInstanceID, 1)
+
+	leaseExpiresAt := time.Now().UTC().Add(lease)
+	first, err := workerA.getActivityWorkItem(ctx)
+	if err != nil {
+		t.Fatalf("worker A failed to acquire activity: %v", err)
+	}
+	invokeExternalActivityEffect(t, effectServer.URL)
+
+	restartPostgresChaos(t)
+	workerB := newDurabilityBackend(t, lease, lease)
+	if !time.Now().Before(leaseExpiresAt) {
+		t.Fatalf("PostgreSQL restart exceeded the activity lease of %s", lease)
+	}
+	if _, err := workerB.getActivityWorkItem(ctx); !errors.Is(err, errNoWorkItems) {
+		t.Fatalf("activity became available before its lease expired after PostgreSQL restart: %v", err)
+	}
+
+	time.Sleep(time.Until(leaseExpiresAt) + 200*time.Millisecond)
+	redelivered, err := workerB.getActivityWorkItem(ctx)
+	if err != nil {
+		t.Fatalf("activity was not redelivered after PostgreSQL restart: %v", err)
+	}
+	if redelivered.SequenceNumber != first.SequenceNumber {
+		t.Fatalf("redelivery selected activity sequence=%d, want %d", redelivered.SequenceNumber, first.SequenceNumber)
+	}
+	invokeExternalActivityEffect(t, effectServer.URL)
+
+	if got := externalEffects.Load(); got != 2 {
+		t.Fatalf("external activity effects=%d, want 2 for at-least-once delivery", got)
 	}
 }
 
@@ -180,6 +230,18 @@ func runCompose(t *testing.T, composeFile, project string, args ...string) {
 	command := exec.Command("docker", commandArgs...)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("docker %v: %v\n%s", commandArgs, err, output)
+	}
+}
+
+func invokeExternalActivityEffect(t *testing.T, effectURL string) {
+	t.Helper()
+	response, err := http.Post(effectURL, "text/plain", nil)
+	if err != nil {
+		t.Fatalf("invoke external activity effect: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("external activity effect status=%d, want %d", response.StatusCode, http.StatusNoContent)
 	}
 }
 
