@@ -178,6 +178,52 @@ FOR EACH STATEMENT EXECUTE FUNCTION `+functionName+`()`); err != nil {
 	}
 }
 
+func TestWorkflowCompletionAfterCommitIsNotAppliedTwice(t *testing.T) {
+	ctx := context.Background()
+	workerA := newDurabilityBackend(t, 2*time.Second, 2*time.Second)
+	resetDurabilityTables(t, ctx, workerA)
+
+	insertWorkflowWithEvent(t, ctx, workerA, durabilityInstanceID, nil, 1)
+	wi, err := workerA.GetWorkflowWorkItem(ctx)
+	if err != nil {
+		t.Fatalf("worker A failed to acquire workflow: %v", err)
+	}
+	wi.State = &protos.WorkflowRuntimeState{
+		InstanceId: string(wi.InstanceID),
+		NewEvents:  []*protos.HistoryEvent{historyEvent(2)},
+	}
+
+	if err := workerA.CompleteWorkflowWorkItem(ctx, wi); err != nil {
+		t.Fatalf("worker A failed to complete workflow: %v", err)
+	}
+	if got := countRows(t, ctx, workerA, "History"); got != 1 {
+		t.Fatalf("history rows after first completion=%d, want 1", got)
+	}
+	if got := countRows(t, ctx, workerA, "NewEvents"); got != 0 {
+		t.Fatalf("queued events after first completion=%d, want 0", got)
+	}
+
+	// Simulate a worker crash after PostgreSQL committed the completion but
+	// before the worker received the successful response. The restarted worker
+	// retries the original work item without knowing whether it committed.
+	workerA.db.Close()
+	workerA.db = nil
+	workerB := newDurabilityBackend(t, 2*time.Second, 2*time.Second)
+
+	if err := workerB.CompleteWorkflowWorkItem(ctx, wi); err == nil {
+		t.Fatal("retry of committed workflow completion succeeded")
+	}
+	if got := countRows(t, ctx, workerB, "History"); got != 1 {
+		t.Fatalf("history rows after completion retry=%d, want 1", got)
+	}
+	if got := countRows(t, ctx, workerB, "NewEvents"); got != 0 {
+		t.Fatalf("queued events after completion retry=%d, want 0", got)
+	}
+	if _, err := workerB.GetWorkflowWorkItem(ctx); !errors.Is(err, errNoWorkItems) {
+		t.Fatalf("workflow item after committed completion retry: %v, want %v", err, errNoWorkItems)
+	}
+}
+
 func TestDurableTimerSurvivesBackendRestart(t *testing.T) {
 	ctx := context.Background()
 	workerA := newDurabilityBackend(t, 100*time.Millisecond, 100*time.Millisecond)
