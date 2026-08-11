@@ -207,6 +207,45 @@ func TestWorkflowRedeliveredAfterLeaseExpiry(t *testing.T) {
 	}
 }
 
+func TestWorkflowReacquiredBySameBackendRejectsStaleCompletion(t *testing.T) {
+	ctx := context.Background()
+	be := newDurabilityBackend(t, 80*time.Millisecond, 80*time.Millisecond)
+	resetDurabilityTables(t, ctx, be)
+	insertWorkflowWithEvent(t, ctx, be, durabilityInstanceID, nil, 1)
+
+	first, err := be.GetWorkflowWorkItem(ctx)
+	if err != nil {
+		t.Fatalf("first workflow acquisition: %v", err)
+	}
+	first.State = &protos.WorkflowRuntimeState{
+		InstanceId: string(first.InstanceID),
+		NewEvents:  []*protos.HistoryEvent{historyEvent(101)},
+	}
+	time.Sleep(160 * time.Millisecond)
+	second, err := be.GetWorkflowWorkItem(ctx)
+	if err != nil {
+		t.Fatalf("same backend workflow reacquisition: %v", err)
+	}
+	if second.LockedBy == first.LockedBy {
+		t.Fatal("same backend reused the workflow lease token")
+	}
+
+	if err := be.CompleteWorkflowWorkItem(ctx, first); err == nil {
+		t.Fatal("stale workflow completion succeeded")
+	}
+	if got := countRows(t, ctx, be, "History"); got != 0 {
+		t.Fatalf("stale workflow completion leaked %d history row(s)", got)
+	}
+	if got := countRows(t, ctx, be, "NewEvents"); got != 1 {
+		t.Fatalf("stale workflow completion changed queued events=%d, want 1", got)
+	}
+
+	second.State = &protos.WorkflowRuntimeState{InstanceId: string(second.InstanceID)}
+	if err := be.CompleteWorkflowWorkItem(ctx, second); err != nil {
+		t.Fatalf("current workflow lease completion: %v", err)
+	}
+}
+
 func TestWorkflowCompletionFailureBeforeCommitRollsBack(t *testing.T) {
 	ctx := context.Background()
 	workerA := newDurabilityBackend(t, 80*time.Millisecond, 80*time.Millisecond)
