@@ -49,6 +49,10 @@ type postgresBackend struct {
 	*local.TasksBackend
 }
 
+func (be *postgresBackend) newLeaseToken() string {
+	return be.workerName + "," + uuid.NewString()
+}
+
 // NewPostgresOptions creates a new options object for the postgres backend provider.
 func NewPostgresOptions(host string, port uint16, database string, user string, password string) *PostgresOptions {
 	conf, err := pgxpool.ParseConfig(fmt.Sprintf("postgresql://%s:%s@%s:%d/%s", user, password, host, port, database))
@@ -987,6 +991,7 @@ func (be *postgresBackend) GetWorkflowWorkItem(ctx context.Context) (*backend.Wo
 
 	now := time.Now().UTC()
 	newLockExpiration := now.Add(be.options.WorkflowLockTimeout)
+	leaseToken := be.newLeaseToken()
 
 	// Place a lock on a workflow instance that has new events that are ready to be executed.
 	row := tx.QueryRow(
@@ -1002,7 +1007,7 @@ func (be *postgresBackend) GetWorkflowWorkItem(ctx context.Context) (*backend.Wo
 			FOR UPDATE SKIP LOCKED
 			LIMIT 1
 		) RETURNING InstanceID`,
-		be.workerName,     // LockedBy for Instances table
+		leaseToken,        // LockedBy for Instances table
 		newLockExpiration, // Updated LockExpiration for Instances table
 		now,               // LockExpiration for Instances table
 		now,               // VisibleTime for NewEvents table
@@ -1028,7 +1033,7 @@ func (be *postgresBackend) GetWorkflowWorkItem(ctx context.Context) (*backend.Wo
 			LIMIT 1000
 		)
 		RETURNING SequenceNumber, EventPayload, DequeueCount`,
-		be.workerName,
+		leaseToken,
 		instanceID,
 		now,
 	)
@@ -1079,7 +1084,7 @@ func (be *postgresBackend) GetWorkflowWorkItem(ctx context.Context) (*backend.Wo
 	wi := &backend.WorkflowWorkItem{
 		InstanceID: api.InstanceID(instanceID),
 		NewEvents:  newEvents,
-		LockedBy:   be.workerName,
+		LockedBy:   leaseToken,
 		RetryCount: maxDequeueCount - 1,
 	}
 
@@ -1093,6 +1098,7 @@ func (be *postgresBackend) getActivityWorkItem(ctx context.Context) (*backend.Ac
 
 	now := time.Now().UTC()
 	newLockExpiration := now.Add(be.options.ActivityLockTimeout)
+	leaseToken := be.newLeaseToken()
 
 	row := be.db.QueryRow(
 		ctx,
@@ -1104,7 +1110,7 @@ func (be *postgresBackend) getActivityWorkItem(ctx context.Context) (*backend.Ac
 			FOR UPDATE SKIP LOCKED
 			LIMIT 1
 		) RETURNING SequenceNumber, InstanceID, EventPayload`,
-		be.workerName,
+		leaseToken,
 		newLockExpiration,
 		now,
 	)
@@ -1131,7 +1137,7 @@ func (be *postgresBackend) getActivityWorkItem(ctx context.Context) (*backend.Ac
 		SequenceNumber: sequenceNumber,
 		InstanceID:     api.InstanceID(instanceID),
 		NewEvent:       e,
-		LockedBy:       be.workerName,
+		LockedBy:       leaseToken,
 	}
 	return wi, nil
 }

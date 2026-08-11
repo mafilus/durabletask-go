@@ -77,6 +77,38 @@ func TestActivityRedeliveredAfterLeaseExpiryAndStaleCompletionRollsBack(t *testi
 	}
 }
 
+func TestActivityReacquiredBySameBackendRejectsStaleCompletion(t *testing.T) {
+	ctx := context.Background()
+	be := newDurabilityBackend(t, 80*time.Millisecond, 80*time.Millisecond)
+	resetDurabilityTables(t, ctx, be)
+	insertActivity(t, ctx, be, durabilityInstanceID, 1)
+
+	first, err := be.getActivityWorkItem(ctx)
+	if err != nil {
+		t.Fatalf("first activity acquisition: %v", err)
+	}
+	time.Sleep(160 * time.Millisecond)
+	second, err := be.getActivityWorkItem(ctx)
+	if err != nil {
+		t.Fatalf("same backend reacquisition: %v", err)
+	}
+	if second.LockedBy == first.LockedBy {
+		t.Fatal("same backend reused the lease token")
+	}
+
+	first.Result = historyEvent(101)
+	if err := be.CompleteActivityWorkItem(ctx, first); !errors.Is(err, backend.ErrWorkItemLockLost) {
+		t.Fatalf("stale completion error=%v, want %v", err, backend.ErrWorkItemLockLost)
+	}
+	if got := countRows(t, ctx, be, "NewEvents"); got != 0 {
+		t.Fatalf("stale completion leaked %d result event(s)", got)
+	}
+	second.Result = historyEvent(102)
+	if err := be.CompleteActivityWorkItem(ctx, second); err != nil {
+		t.Fatalf("current lease completion: %v", err)
+	}
+}
+
 func TestActivityLeaseExpiryCanOverlapExternalExecutions(t *testing.T) {
 	ctx := context.Background()
 	const lease = 80 * time.Millisecond
