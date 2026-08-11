@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -716,7 +717,6 @@ func (be *sqliteBackend) GetWorkflowMetadata(ctx context.Context, iid api.Instan
 		return nil, err
 	}
 
-
 	startEvent, err := be.getStartEvent(ctx, iid)
 	if err != nil {
 		return nil, err
@@ -861,6 +861,7 @@ func (be *sqliteBackend) getWorkflowWorkItem(ctx context.Context) (*backend.Work
 				SELECT 1 FROM NewEvents E
 				WHERE E.[InstanceID] = I.[InstanceID] AND (E.[VisibleTime] IS NULL OR E.[VisibleTime] < ?)
 			)
+			ORDER BY I.[rowid] ASC
 			LIMIT 1
 		) RETURNING [InstanceID]`,
 		be.workerName,     // LockedBy for Instances table
@@ -889,9 +890,10 @@ func (be *sqliteBackend) getWorkflowWorkItem(ctx context.Context) (*backend.Work
 		`UPDATE NewEvents SET [DequeueCount] = [DequeueCount] + 1, [LockedBy] = ? WHERE rowid IN (
 			SELECT rowid FROM NewEvents
 			WHERE [InstanceID] = ? AND ([VisibleTime] IS NULL OR [VisibleTime] <= ?)
+			ORDER BY [SequenceNumber] ASC
 			LIMIT 1000
 		)
-		RETURNING [EventPayload], [DequeueCount]`,
+		RETURNING [SequenceNumber], [EventPayload], [DequeueCount]`,
 		be.workerName,
 		instanceID,
 		now,
@@ -902,11 +904,16 @@ func (be *sqliteBackend) getWorkflowWorkItem(ctx context.Context) (*backend.Work
 
 	maxDequeueCount := int32(0)
 
-	newEvents := make([]*protos.HistoryEvent, 0, 10)
+	type dequeuedEvent struct {
+		sequenceNumber int64
+		event          *protos.HistoryEvent
+	}
+	dequeuedEvents := make([]dequeuedEvent, 0, 10)
 	for events.Next() {
+		var sequenceNumber int64
 		var eventPayload []byte
 		var dequeueCount int32
-		if err := events.Scan(&eventPayload, &dequeueCount); err != nil {
+		if err := events.Scan(&sequenceNumber, &eventPayload, &dequeueCount); err != nil {
 			return nil, fmt.Errorf("failed to read history event: %w", err)
 		}
 
@@ -919,7 +926,15 @@ func (be *sqliteBackend) getWorkflowWorkItem(ctx context.Context) (*backend.Work
 			return nil, err
 		}
 
-		newEvents = append(newEvents, e)
+		dequeuedEvents = append(dequeuedEvents, dequeuedEvent{sequenceNumber: sequenceNumber, event: e})
+	}
+	sort.Slice(dequeuedEvents, func(i, j int) bool {
+		return dequeuedEvents[i].sequenceNumber < dequeuedEvents[j].sequenceNumber
+	})
+
+	newEvents := make([]*protos.HistoryEvent, 0, len(dequeuedEvents))
+	for _, event := range dequeuedEvents {
+		newEvents = append(newEvents, event.event)
 	}
 
 	if err = tx.Commit(); err != nil {
@@ -1008,7 +1023,7 @@ func (be *sqliteBackend) getActivityWorkItem(ctx context.Context) (*backend.Acti
 	}
 
 	now := time.Now().UTC()
-	newLockExpiration := now.Add(be.options.WorkflowLockTimeout)
+	newLockExpiration := now.Add(be.options.ActivityLockTimeout)
 
 	row := be.db.QueryRowContext(
 		ctx,
@@ -1016,6 +1031,7 @@ func (be *sqliteBackend) getActivityWorkItem(ctx context.Context) (*backend.Acti
 		WHERE [SequenceNumber] = (
 			SELECT [SequenceNumber] FROM NewTasks T
 			WHERE T.[LockExpiration] IS NULL OR T.[LockExpiration] < ?
+			ORDER BY T.[SequenceNumber] ASC
 			LIMIT 1
 		) RETURNING [SequenceNumber], [InstanceID], [EventPayload]`,
 		be.workerName,
