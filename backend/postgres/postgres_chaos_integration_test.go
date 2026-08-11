@@ -1,4 +1,4 @@
-//go:build integration
+//go:build integration && postgreschaos
 
 package postgres
 
@@ -223,13 +223,13 @@ func TestIntegrationPostgresRestartAfterWorkflowCommitBeforeAcknowledgement(t *t
 
 	committed := make(chan struct{})
 	allowReturn := make(chan struct{})
-	previousHook := workflowCompletionAfterCommitHook
-	workflowCompletionAfterCommitHook = func() {
+	previousHook := afterWorkflowCompletionCommitHook
+	afterWorkflowCompletionCommitHook = func() {
 		close(committed)
 		<-allowReturn
 	}
 	t.Cleanup(func() {
-		workflowCompletionAfterCommitHook = previousHook
+		afterWorkflowCompletionCommitHook = previousHook
 	})
 
 	completed := make(chan error, 1)

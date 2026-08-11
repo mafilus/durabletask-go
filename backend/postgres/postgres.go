@@ -35,10 +35,6 @@ var emptyString string = ""
 
 var errNoWorkItems = errors.New("no work items were found")
 
-// workflowCompletionAfterCommitHook is used only by the post-commit chaos test
-// to pause a completion after it is durable but before its caller is notified.
-var workflowCompletionAfterCommitHook func()
-
 type PostgresOptions struct {
 	PgOptions           *pgxpool.Config
 	WorkflowLockTimeout time.Duration
@@ -540,9 +536,7 @@ func (be *postgresBackend) CompleteWorkflowWorkItem(ctx context.Context, wi *bac
 	if err = tx.Commit(ctx); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
-	if workflowCompletionAfterCommitHook != nil {
-		workflowCompletionAfterCommitHook()
-	}
+	afterWorkflowCompletionCommit()
 
 	return nil
 }
