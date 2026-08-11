@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -100,6 +101,80 @@ func TestWorkflowRedeliveredAfterLeaseExpiry(t *testing.T) {
 	}
 	if second.RetryCount < 1 {
 		t.Fatalf("redelivered workflow RetryCount=%d, want >= 1", second.RetryCount)
+	}
+}
+
+func TestWorkflowCompletionFailureBeforeCommitRollsBack(t *testing.T) {
+	ctx := context.Background()
+	workerA := newDurabilityBackend(t, 80*time.Millisecond, 80*time.Millisecond)
+	resetDurabilityTables(t, ctx, workerA)
+	workerB := newDurabilityBackend(t, 80*time.Millisecond, 80*time.Millisecond)
+
+	insertWorkflowWithEvent(t, ctx, workerA, durabilityInstanceID, nil, 1)
+	first, err := workerA.GetWorkflowWorkItem(ctx)
+	if err != nil {
+		t.Fatalf("worker A failed to acquire workflow: %v", err)
+	}
+	first.State = &protos.WorkflowRuntimeState{
+		InstanceId: string(first.InstanceID),
+		NewEvents:  []*protos.HistoryEvent{historyEvent(2)},
+	}
+
+	const triggerName = "durabletask_fail_workflow_completion"
+	const functionName = "durabletask_fail_workflow_completion_before_commit"
+	if _, err := workerA.db.Exec(ctx, `CREATE FUNCTION `+functionName+`() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'injected workflow completion failure';
+END;
+$$ LANGUAGE plpgsql`); err != nil {
+		t.Fatalf("create failure injection function: %v", err)
+	}
+	if _, err := workerA.db.Exec(ctx, `CREATE TRIGGER `+triggerName+` BEFORE DELETE ON NewEvents
+FOR EACH STATEMENT EXECUTE FUNCTION `+functionName+`()`); err != nil {
+		t.Fatalf("create failure injection trigger: %v", err)
+	}
+	removeFailureInjection := func() {
+		if _, err := workerA.db.Exec(ctx, "DROP TRIGGER IF EXISTS "+triggerName+" ON NewEvents"); err != nil {
+			t.Errorf("drop failure injection trigger: %v", err)
+		}
+		if _, err := workerA.db.Exec(ctx, "DROP FUNCTION IF EXISTS "+functionName+"()"); err != nil {
+			t.Errorf("drop failure injection function: %v", err)
+		}
+	}
+	t.Cleanup(removeFailureInjection)
+
+	err = workerA.CompleteWorkflowWorkItem(ctx, first)
+	if err == nil || !strings.Contains(err.Error(), "injected workflow completion failure") {
+		t.Fatalf("CompleteWorkflowWorkItem error = %v, want injected failure", err)
+	}
+	removeFailureInjection()
+
+	if got := countRows(t, ctx, workerA, "History"); got != 0 {
+		t.Fatalf("history rows after failed completion=%d, want 0", got)
+	}
+	if got := countRows(t, ctx, workerA, "NewEvents"); got != 1 {
+		t.Fatalf("queued events after failed completion=%d, want 1", got)
+	}
+
+	var lockedBy string
+	var leaseActive bool
+	if err := workerA.db.QueryRow(ctx, "SELECT LockedBy, LockExpiration IS NOT NULL FROM Instances WHERE InstanceID = $1", durabilityInstanceID).Scan(&lockedBy, &leaseActive); err != nil {
+		t.Fatalf("read workflow lease after failed completion: %v", err)
+	}
+	if lockedBy != first.LockedBy || !leaseActive {
+		t.Fatalf("workflow lease after failed completion=(owner=%q active=%t), want owner=%q active=true", lockedBy, leaseActive, first.LockedBy)
+	}
+
+	time.Sleep(160 * time.Millisecond)
+	redelivered, err := workerB.GetWorkflowWorkItem(ctx)
+	if err != nil {
+		t.Fatalf("worker B failed to redeliver workflow after failed completion: %v", err)
+	}
+	if redelivered.InstanceID != first.InstanceID {
+		t.Fatalf("redelivery selected instance %q, want %q", redelivered.InstanceID, first.InstanceID)
+	}
+	if len(redelivered.NewEvents) != 1 || redelivered.NewEvents[0].GetEventId() != 1 {
+		t.Fatalf("redelivery events=%v, want original event ID 1", redelivered.NewEvents)
 	}
 }
 
