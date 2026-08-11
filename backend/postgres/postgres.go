@@ -1082,6 +1082,8 @@ func (be *postgresBackend) getActivityWorkItem(ctx context.Context) (*backend.Ac
 		WHERE SequenceNumber = (
 			SELECT SequenceNumber FROM NewTasks T
 			WHERE T.LockExpiration IS NULL OR T.LockExpiration < $3
+			ORDER BY T.SequenceNumber ASC
+			FOR UPDATE SKIP LOCKED
 			LIMIT 1
 		) RETURNING SequenceNumber, InstanceID, EventPayload`,
 		be.workerName,
