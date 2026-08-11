@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -996,6 +997,8 @@ func (be *postgresBackend) GetWorkflowWorkItem(ctx context.Context) (*backend.Wo
 				SELECT 1 FROM NewEvents E
 				WHERE E.InstanceID = I.InstanceID AND (E.VisibleTime IS NULL OR E.VisibleTime < $4)
 			)
+			ORDER BY I.SequenceNumber ASC
+			FOR UPDATE SKIP LOCKED
 			LIMIT 1
 		) RETURNING InstanceID`,
 		be.workerName,     // LockedBy for Instances table
@@ -1020,9 +1023,10 @@ func (be *postgresBackend) GetWorkflowWorkItem(ctx context.Context) (*backend.Wo
 		`UPDATE NewEvents SET DequeueCount = DequeueCount + 1, LockedBy = $1 WHERE SequenceNumber IN (
 			SELECT SequenceNumber FROM NewEvents
 			WHERE InstanceID = $2 AND (VisibleTime IS NULL OR VisibleTime <= $3)
+			ORDER BY SequenceNumber ASC
 			LIMIT 1000
 		)
-		RETURNING EventPayload, DequeueCount`,
+		RETURNING SequenceNumber, EventPayload, DequeueCount`,
 		be.workerName,
 		instanceID,
 		now,
@@ -1034,11 +1038,16 @@ func (be *postgresBackend) GetWorkflowWorkItem(ctx context.Context) (*backend.Wo
 
 	maxDequeueCount := int32(0)
 
-	newEvents := make([]*protos.HistoryEvent, 0, 10)
+	type dequeuedEvent struct {
+		sequenceNumber int64
+		event          *protos.HistoryEvent
+	}
+	dequeuedEvents := make([]dequeuedEvent, 0, 10)
 	for events.Next() {
+		var sequenceNumber int64
 		var eventPayload []byte
 		var dequeueCount int32
-		if err := events.Scan(&eventPayload, &dequeueCount); err != nil {
+		if err := events.Scan(&sequenceNumber, &eventPayload, &dequeueCount); err != nil {
 			return nil, fmt.Errorf("failed to read history event: %w", err)
 		}
 
@@ -1051,7 +1060,15 @@ func (be *postgresBackend) GetWorkflowWorkItem(ctx context.Context) (*backend.Wo
 			return nil, err
 		}
 
-		newEvents = append(newEvents, e)
+		dequeuedEvents = append(dequeuedEvents, dequeuedEvent{sequenceNumber: sequenceNumber, event: e})
+	}
+	sort.Slice(dequeuedEvents, func(i, j int) bool {
+		return dequeuedEvents[i].sequenceNumber < dequeuedEvents[j].sequenceNumber
+	})
+
+	newEvents := make([]*protos.HistoryEvent, 0, len(dequeuedEvents))
+	for _, event := range dequeuedEvents {
+		newEvents = append(newEvents, event.event)
 	}
 
 	if err = tx.Commit(ctx); err != nil {
@@ -1074,7 +1091,7 @@ func (be *postgresBackend) getActivityWorkItem(ctx context.Context) (*backend.Ac
 	}
 
 	now := time.Now().UTC()
-	newLockExpiration := now.Add(be.options.WorkflowLockTimeout)
+	newLockExpiration := now.Add(be.options.ActivityLockTimeout)
 
 	row := be.db.QueryRow(
 		ctx,
@@ -1082,6 +1099,8 @@ func (be *postgresBackend) getActivityWorkItem(ctx context.Context) (*backend.Ac
 		WHERE SequenceNumber = (
 			SELECT SequenceNumber FROM NewTasks T
 			WHERE T.LockExpiration IS NULL OR T.LockExpiration < $3
+			ORDER BY T.SequenceNumber ASC
+			FOR UPDATE SKIP LOCKED
 			LIMIT 1
 		) RETURNING SequenceNumber, InstanceID, EventPayload`,
 		be.workerName,

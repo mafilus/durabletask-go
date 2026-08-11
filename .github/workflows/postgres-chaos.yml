@@ -1,0 +1,59 @@
+name: PostgreSQL chaos integration
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PGHOST: 127.0.0.1
+  PGPORT: "5432"
+  PGUSER: postgres
+  PGPASSWORD: postgres
+  PGDATABASE: durabletask
+  STRIX_TEST_POSTGRES_CHAOS: "1"
+  STRIX_POSTGRES_CHAOS_COMPOSE_FILE: ${{ github.workspace }}/.github/postgres-chaos.compose.yml
+  STRIX_POSTGRES_CHAOS_PROJECT: durabletask-chaos
+
+jobs:
+  restart-boundaries:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Start isolated PostgreSQL
+        run: docker compose -f "$STRIX_POSTGRES_CHAOS_COMPOSE_FILE" -p "$STRIX_POSTGRES_CHAOS_PROJECT" up -d --wait
+
+      - name: Run PostgreSQL restart-boundary tests
+        run: >-
+          go test -tags integration ./backend/postgres/... -count=1 -v
+          -run '^TestIntegrationPostgresRestart'
+
+      - name: Capture PostgreSQL diagnostics
+        if: always()
+        run: |
+          docker compose -f "$STRIX_POSTGRES_CHAOS_COMPOSE_FILE" -p "$STRIX_POSTGRES_CHAOS_PROJECT" ps > postgres-chaos-ps.txt
+          docker compose -f "$STRIX_POSTGRES_CHAOS_COMPOSE_FILE" -p "$STRIX_POSTGRES_CHAOS_PROJECT" logs --no-color > postgres-chaos.log
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-chaos-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            postgres-chaos-ps.txt
+            postgres-chaos.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Remove isolated PostgreSQL
+        if: always()
+        run: docker compose -f "$STRIX_POSTGRES_CHAOS_COMPOSE_FILE" -p "$STRIX_POSTGRES_CHAOS_PROJECT" down -v --remove-orphans
