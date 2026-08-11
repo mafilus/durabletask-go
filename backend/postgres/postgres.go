@@ -1020,6 +1020,7 @@ func (be *postgresBackend) GetWorkflowWorkItem(ctx context.Context) (*backend.Wo
 		`UPDATE NewEvents SET DequeueCount = DequeueCount + 1, LockedBy = $1 WHERE SequenceNumber IN (
 			SELECT SequenceNumber FROM NewEvents
 			WHERE InstanceID = $2 AND (VisibleTime IS NULL OR VisibleTime <= $3)
+			ORDER BY SequenceNumber ASC
 			LIMIT 1000
 		)
 		RETURNING EventPayload, DequeueCount`,
@@ -1074,7 +1075,7 @@ func (be *postgresBackend) getActivityWorkItem(ctx context.Context) (*backend.Ac
 	}
 
 	now := time.Now().UTC()
-	newLockExpiration := now.Add(be.options.WorkflowLockTimeout)
+	newLockExpiration := now.Add(be.options.ActivityLockTimeout)
 
 	row := be.db.QueryRow(
 		ctx,

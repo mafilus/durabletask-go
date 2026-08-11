@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
@@ -62,6 +63,61 @@ func TestStressConcurrentActivityPollersDoNotDoubleAcquire(t *testing.T) {
 	}
 	if len(seen) != total {
 		t.Fatalf("unique acquisitions=%d, want %d", len(seen), total)
+	}
+}
+
+func TestStressConcurrentWorkflowPollersDoNotDoubleAcquire(t *testing.T) {
+	ctx := context.Background()
+	be := newDurabilityBackendWithMaxConns(t, 2*time.Second, 2*time.Second, 8)
+
+	const workers = 8
+	const rounds = 20
+
+	for round := 0; round < rounds; round++ {
+		resetDurabilityTables(t, ctx, be)
+		instanceID := fmt.Sprintf("workflow-stress-%03d", round)
+		insertWorkflowWithEvent(t, ctx, be, instanceID, nil, int32(round+1))
+
+		start := make(chan struct{})
+		results := make(chan *backend.WorkflowWorkItem, workers)
+		errs := make(chan error, workers)
+		var wg sync.WaitGroup
+
+		for worker := 0; worker < workers; worker++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				wi, err := be.GetWorkflowWorkItem(ctx)
+				if err != nil {
+					errs <- err
+					return
+				}
+				results <- wi
+			}()
+		}
+
+		close(start)
+		wg.Wait()
+		close(results)
+		close(errs)
+
+		acquisitions := 0
+		for wi := range results {
+			if string(wi.InstanceID) != instanceID {
+				t.Fatalf("round %d: acquired instance %q, want %q", round, wi.InstanceID, instanceID)
+			}
+			acquisitions++
+		}
+		for err := range errs {
+			if !errors.Is(err, errNoWorkItems) {
+				t.Fatalf("round %d: concurrent workflow poller failed: %v", round, err)
+			}
+		}
+
+		if acquisitions != 1 {
+			t.Fatalf("round %d: workflow acquired %d times, want 1", round, acquisitions)
+		}
 	}
 }
 

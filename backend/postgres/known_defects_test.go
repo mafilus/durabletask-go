@@ -55,6 +55,7 @@ func TestKnownDefectDequeueQueriesDeclareFIFOOrdering(t *testing.T) {
 	source := string(sourceBytes)
 
 	activity := functionRegion(t, source, "func (be *postgresBackend) getActivityWorkItem", "func (be *postgresBackend) CompleteActivityWorkItem")
+	activity = strings.ReplaceAll(activity, "T.SequenceNumber", "SequenceNumber")
 	if !strings.Contains(activity, "ORDER BY SequenceNumber ASC") {
 		t.Error("NewTasks dequeue does not explicitly ORDER BY SequenceNumber ASC before LIMIT")
 	}
