@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"reflect"
 	"strings"
 	"time"
@@ -166,9 +167,15 @@ func SpanContextFromTraceContext(tc *protos.TraceContext) (trace.SpanContext, er
 	}
 
 	var decodedTraceFlags []byte
+	if len(traceFlags) != 2 {
+		return trace.SpanContext{}, fmt.Errorf("invalid trace flags %q: want exactly two hexadecimal characters", traceFlags)
+	}
 	decodedTraceFlags, err = hex.DecodeString(traceFlags)
 	if err != nil {
 		return trace.SpanContext{}, err
+	}
+	if len(decodedTraceFlags) != 1 {
+		return trace.SpanContext{}, fmt.Errorf("invalid trace flags %q: want exactly one byte", traceFlags)
 	}
 
 	spanContextConfig := trace.SpanContextConfig{

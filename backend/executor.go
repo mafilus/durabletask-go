@@ -542,7 +542,7 @@ func (g *grpcExecutor) StartInstance(ctx context.Context, req *protos.CreateInst
 		var err error
 		ctx, err = helpers.ContextFromTraceContext(ctx, req.ParentTraceContext)
 		if err != nil {
-			return nil, err
+			return nil, status.Errorf(codes.InvalidArgument, "invalid parent trace context: %v", err)
 		}
 	}
 
