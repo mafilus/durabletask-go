@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dapr/durabletask-go/api/protos"
 	"github.com/dapr/durabletask-go/backend"
 )
 
@@ -118,6 +119,60 @@ func TestStressConcurrentWorkflowPollersDoNotDoubleAcquire(t *testing.T) {
 		if acquisitions != 1 {
 			t.Fatalf("round %d: workflow acquired %d times, want 1", round, acquisitions)
 		}
+	}
+}
+
+func TestWorkflowEventBatchesAreFIFOAndComplete(t *testing.T) {
+	ctx := context.Background()
+	be := newDurabilityBackend(t, 2*time.Second, 2*time.Second)
+	resetDurabilityTables(t, ctx, be)
+
+	const totalEvents = 1001
+	const batchSize = 1000
+	const instanceID = "workflow-event-batches"
+
+	insertWorkflowWithEvent(t, ctx, be, instanceID, nil, 1)
+	for eventID := int32(2); eventID <= totalEvents; eventID++ {
+		payload, err := backend.MarshalHistoryEvent(historyEvent(eventID))
+		if err != nil {
+			t.Fatalf("marshal workflow event %d: %v", eventID, err)
+		}
+		if _, err := be.db.Exec(ctx, "INSERT INTO NewEvents (InstanceID, EventPayload) VALUES ($1, $2)", instanceID, payload); err != nil {
+			t.Fatalf("insert workflow event %d: %v", eventID, err)
+		}
+	}
+
+	for firstEventID := int32(1); firstEventID <= totalEvents; firstEventID += batchSize {
+		wi, err := be.GetWorkflowWorkItem(ctx)
+		if err != nil {
+			t.Fatalf("get workflow batch starting at event %d: %v", firstEventID, err)
+		}
+
+		expectedCount := batchSize
+		if remaining := totalEvents - int(firstEventID) + 1; remaining < expectedCount {
+			expectedCount = remaining
+		}
+		if got := len(wi.NewEvents); got != expectedCount {
+			t.Fatalf("batch starting at event %d has %d events, want %d", firstEventID, got, expectedCount)
+		}
+		for index, event := range wi.NewEvents {
+			wantEventID := firstEventID + int32(index)
+			if gotEventID := event.GetEventId(); gotEventID != wantEventID {
+				t.Fatalf("batch starting at event %d, index %d: event ID=%d, want %d", firstEventID, index, gotEventID, wantEventID)
+			}
+		}
+
+		wi.State = &protos.WorkflowRuntimeState{}
+		if err := be.CompleteWorkflowWorkItem(ctx, wi); err != nil {
+			t.Fatalf("complete workflow batch starting at event %d: %v", firstEventID, err)
+		}
+	}
+
+	if got := countRows(t, ctx, be, "NewEvents"); got != 0 {
+		t.Fatalf("remaining workflow events=%d, want 0", got)
+	}
+	if _, err := be.GetWorkflowWorkItem(ctx); !errors.Is(err, errNoWorkItems) {
+		t.Fatalf("workflow item after all batches: %v, want %v", err, errNoWorkItems)
 	}
 }
 

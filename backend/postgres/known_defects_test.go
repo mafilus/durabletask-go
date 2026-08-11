@@ -9,15 +9,7 @@ import (
 	"time"
 )
 
-func requireKnownDefects(t *testing.T) {
-	t.Helper()
-	if os.Getenv("STRIX_RUN_KNOWN_DEFECTS") != "1" {
-		t.Skip("known-defect reproduction; set STRIX_RUN_KNOWN_DEFECTS=1")
-	}
-}
-
-func TestKnownDefectActivityLockTimeoutIsApplied(t *testing.T) {
-	requireKnownDefects(t)
+func TestActivityLockTimeoutIsApplied(t *testing.T) {
 	ctx := context.Background()
 
 	// The workflow lease is deliberately much longer than the activity lease.
@@ -45,8 +37,7 @@ func TestKnownDefectActivityLockTimeoutIsApplied(t *testing.T) {
 	}
 }
 
-func TestKnownDefectDequeueQueriesDeclareFIFOOrdering(t *testing.T) {
-	requireKnownDefects(t)
+func TestDequeueQueriesDeclareFIFOOrdering(t *testing.T) {
 
 	sourceBytes, err := os.ReadFile("postgres.go")
 	if err != nil {

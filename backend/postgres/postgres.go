@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -1025,7 +1026,7 @@ func (be *postgresBackend) GetWorkflowWorkItem(ctx context.Context) (*backend.Wo
 			ORDER BY SequenceNumber ASC
 			LIMIT 1000
 		)
-		RETURNING EventPayload, DequeueCount`,
+		RETURNING SequenceNumber, EventPayload, DequeueCount`,
 		be.workerName,
 		instanceID,
 		now,
@@ -1037,11 +1038,16 @@ func (be *postgresBackend) GetWorkflowWorkItem(ctx context.Context) (*backend.Wo
 
 	maxDequeueCount := int32(0)
 
-	newEvents := make([]*protos.HistoryEvent, 0, 10)
+	type dequeuedEvent struct {
+		sequenceNumber int64
+		event          *protos.HistoryEvent
+	}
+	dequeuedEvents := make([]dequeuedEvent, 0, 10)
 	for events.Next() {
+		var sequenceNumber int64
 		var eventPayload []byte
 		var dequeueCount int32
-		if err := events.Scan(&eventPayload, &dequeueCount); err != nil {
+		if err := events.Scan(&sequenceNumber, &eventPayload, &dequeueCount); err != nil {
 			return nil, fmt.Errorf("failed to read history event: %w", err)
 		}
 
@@ -1054,7 +1060,15 @@ func (be *postgresBackend) GetWorkflowWorkItem(ctx context.Context) (*backend.Wo
 			return nil, err
 		}
 
-		newEvents = append(newEvents, e)
+		dequeuedEvents = append(dequeuedEvents, dequeuedEvent{sequenceNumber: sequenceNumber, event: e})
+	}
+	sort.Slice(dequeuedEvents, func(i, j int) bool {
+		return dequeuedEvents[i].sequenceNumber < dequeuedEvents[j].sequenceNumber
+	})
+
+	newEvents := make([]*protos.HistoryEvent, 0, len(dequeuedEvents))
+	for _, event := range dequeuedEvents {
+		newEvents = append(newEvents, event.event)
 	}
 
 	if err = tx.Commit(ctx); err != nil {
