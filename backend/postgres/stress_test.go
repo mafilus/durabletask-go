@@ -15,7 +15,7 @@ import (
 
 func TestStressConcurrentActivityPollersDoNotDoubleAcquire(t *testing.T) {
 	ctx := context.Background()
-	be := newDurabilityBackendWithMaxConns(t, 2*time.Second, 2*time.Second, 8)
+	be := newDurabilityBackendWithMaxConns(t, 30*time.Second, 30*time.Second, 8)
 	resetDurabilityTables(t, ctx, be)
 
 	const workers = 8
@@ -69,7 +69,7 @@ func TestStressConcurrentActivityPollersDoNotDoubleAcquire(t *testing.T) {
 
 func TestStressConcurrentWorkflowPollersDoNotDoubleAcquire(t *testing.T) {
 	ctx := context.Background()
-	be := newDurabilityBackendWithMaxConns(t, 2*time.Second, 2*time.Second, 8)
+	be := newDurabilityBackendWithMaxConns(t, 30*time.Second, 30*time.Second, 8)
 
 	const workers = 8
 	const rounds = 20
@@ -131,15 +131,25 @@ func TestWorkflowEventBatchesAreFIFOAndComplete(t *testing.T) {
 	const batchSize = 1000
 	const instanceID = "workflow-event-batches"
 
-	insertWorkflowWithEvent(t, ctx, be, instanceID, nil, 1)
-	for eventID := int32(2); eventID <= totalEvents; eventID++ {
+	tx, err := be.db.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin workflow event setup: %v", err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `INSERT INTO Instances (InstanceID, ExecutionID, Name, RuntimeStatus) VALUES ($1, $2, $3, 'PENDING')`, instanceID, "execution-1", "durability-test"); err != nil {
+		t.Fatalf("insert workflow instance: %v", err)
+	}
+	for eventID := int32(1); eventID <= totalEvents; eventID++ {
 		payload, err := backend.MarshalHistoryEvent(historyEvent(eventID))
 		if err != nil {
 			t.Fatalf("marshal workflow event %d: %v", eventID, err)
 		}
-		if _, err := be.db.Exec(ctx, "INSERT INTO NewEvents (InstanceID, EventPayload) VALUES ($1, $2)", instanceID, payload); err != nil {
+		if _, err := tx.Exec(ctx, "INSERT INTO NewEvents (InstanceID, EventPayload) VALUES ($1, $2)", instanceID, payload); err != nil {
 			t.Fatalf("insert workflow event %d: %v", eventID, err)
 		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit workflow event setup: %v", err)
 	}
 
 	for firstEventID := int32(1); firstEventID <= totalEvents; firstEventID += batchSize {

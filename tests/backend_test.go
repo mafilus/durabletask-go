@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"testing"
@@ -25,7 +26,7 @@ var (
 	ctx                   = context.Background()
 	logger                = backend.DefaultLogger()
 	sqliteInMemoryOptions = sqlite.NewSqliteOptions("")
-	sqliteFileOptions     = sqlite.NewSqliteOptions("test.sqlite3")
+	sqliteFileOptions     = sqlite.NewSqliteOptions(filepath.Join(os.TempDir(), fmt.Sprintf("durabletask-go-tests-%d.sqlite3", os.Getpid())))
 )
 
 func getRunnableBackends() []backend.Backend {
@@ -393,7 +394,6 @@ func Test_GetWorkflowMetadata_ParentAppID(t *testing.T) {
 	}
 }
 
-
 // Test_GetWorkflowMetadata_NoParent asserts that a top-level workflow
 // produces a metadata with no parent fields set.
 func Test_GetWorkflowMetadata_NoParent(t *testing.T) {
@@ -413,7 +413,6 @@ func Test_GetWorkflowMetadata_NoParent(t *testing.T) {
 		assert.Nil(t, metadata.GetParentAppId())
 	}
 }
-
 
 func Test_GetWorkflowMetadata_StartedAt(t *testing.T) {
 	for i, be := range backends {
@@ -455,7 +454,6 @@ func Test_GetWorkflowMetadata_StartedAt(t *testing.T) {
 			continue
 		}
 		afterProcess := time.Now().UTC()
-
 
 		// after processing the work item startAt should return a non-nil value not earlier than the time the
 		// work item was processed and not earlier than the start time
@@ -683,4 +681,3 @@ func getWorkflowMetadata(t assert.TestingT, be backend.Backend, iid api.Instance
 
 	return nil, false
 }
-
