@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,9 +27,34 @@ var (
 )
 
 func AssertSpanSequence(t assert.TestingT, spans []trace.ReadOnlySpan, spanAsserts ...spanValidator) {
+	spans = terminalAndNonWorkflowSpans(spans)
 	for i, f := range spanAsserts {
 		f(t, spans, i)
 	}
+}
+
+// terminalAndNonWorkflowSpans removes in-progress workflow-turn spans from
+// sequence assertions. Every durable execution turn is exported, but only a
+// completed or continued-as-new turn has a runtime status. Callers that need
+// to validate every turn inspect the exporter directly.
+func terminalAndNonWorkflowSpans(spans []trace.ReadOnlySpan) []trace.ReadOnlySpan {
+	filtered := make([]trace.ReadOnlySpan, 0, len(spans))
+	for _, span := range spans {
+		if strings.HasPrefix(span.Name(), "orchestration||") && !hasRuntimeStatus(span) {
+			continue
+		}
+		filtered = append(filtered, span)
+	}
+	return filtered
+}
+
+func hasRuntimeStatus(span trace.ReadOnlySpan) bool {
+	for _, attribute := range span.Attributes() {
+		if attribute.Key == "durabletask.runtime_status" {
+			return true
+		}
+	}
+	return false
 }
 
 // AssertWorkflowCreated validates a create_orchestration span
@@ -144,6 +170,25 @@ func AssertSpan(name string, optionalAsserts ...spanAttributeValidator) spanVali
 			fmt.Printf("span assertion for %s (index=%d) failed\n", name, index)
 		}
 	}
+}
+
+// AssertSpanParent verifies a parent-child relationship without relying on the
+// exporter order. Workflow execution may add intermediate durable-turn spans.
+func AssertSpanParent(t assert.TestingT, spans []trace.ReadOnlySpan, childName, parentName string) {
+	child := findSpan(spans, childName)
+	parent := findSpan(spans, parentName)
+	if assert.NotNil(t, child, "span %q was not exported", childName) && assert.NotNil(t, parent, "span %q was not exported", parentName) {
+		assert.Equal(t, parent.SpanContext().SpanID(), child.Parent().SpanID())
+	}
+}
+
+func findSpan(spans []trace.ReadOnlySpan, name string) trace.ReadOnlySpan {
+	for _, span := range spans {
+		if span.Name() == name {
+			return span
+		}
+	}
+	return nil
 }
 
 func AssertPatch(patchName string, optionalAsserts ...spanAttributeValidator) spanValidator {

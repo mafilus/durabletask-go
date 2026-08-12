@@ -266,7 +266,7 @@ func Test_SingleActivity_TaskSpan(t *testing.T) {
 		utils.AssertWorkflowExecuted("SingleActivity", id, "COMPLETED"),
 	)
 	// assert child-parent relationship
-	assert.Equal(t, spans[1].Parent().SpanID(), spans[2].SpanContext().SpanID())
+	utils.AssertSpanParent(t, spans, "activityChild", "activity||SayHello")
 }
 
 func Test_ActivityChain(t *testing.T) {
