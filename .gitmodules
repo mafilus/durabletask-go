@@ -1,4 +1,3 @@
 [submodule "submodules/durabletask-protobuf"]
 	path = submodules/durabletask-protobuf
-	url = https://github.com/dapr/durabletask-protobuf
-	branch = main
+	url = https://github.com/mafilus/durabletask-protobuf.git

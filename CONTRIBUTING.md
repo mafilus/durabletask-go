@@ -14,14 +14,15 @@ If you already cloned the repository without `--recurse-submodules`, you can ini
 git submodule update --init --recursive
 ```
 
-To grab latest, do some variation of the following nuke your existing submodule folder then run:
+The protobuf definitions are pinned to the commit recorded by this repository.
+To reset a local submodule checkout to that pinned revision, run:
 ```bash
-rm -rf submodules/durabletask-protobuf
-git submodule add --force https://github.com/dapr/durabletask-protobuf.git submodules/durabletask-protobuf
-git submodule update --remote submodules/durabletask-protobuf
+git submodule sync --recursive
+git submodule update --init --recursive
 ```
 
-This will initialize and update the submodules.
+Do not use `git submodule update --remote`: protobuf updates are made only by
+intentionally changing the pinned submodule commit.
 
 ## Building the project
 
@@ -44,13 +45,9 @@ protoc --go_out=. --go-grpc_out=. \
   submodules/durabletask-protobuf/protos/orchestrator_service.proto
 ```
 
-For local development with protobuf changes:
-
-1. If you have local changes to the proto files in a neighboring durabletask-protobuf directory:
+For local development with protobuf changes, use a neighboring checkout of
+`mafilus/durabletask-protobuf`:
 ```bash
-# Point go.mod to your local durabletask-protobuf repo
-replace github.com/dapr/durabletask-protobuf => ../durabletask-protobuf
-
 # Regenerate protobuf files using your local proto definitions
 protoc --go_out=. --go-grpc_out=. \
   -I ../durabletask-protobuf/protos \
@@ -62,7 +59,8 @@ protoc --go_out=. --go-grpc_out=. \
   ../durabletask-protobuf/protos/orchestrator_service.proto
 ```
 
-This will use your local proto files instead of the ones in the submodule, which is useful when testing protobuf changes before submitting them upstream.
+This uses the local proto files instead of the pinned submodule, which is useful
+when testing a deliberate protobuf update before pinning its commit here.
 
 ### Generating mocks for testing
 
