@@ -49,10 +49,38 @@ func TestWorkflowDequeueDeclaresFIFOOrdering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read sqlite.go: %v", err)
 	}
-	workflow := string(source)
+	workflow := functionRegion(t, string(source), "func (be *sqliteBackend) getWorkflowWorkItem", "func (be *sqliteBackend) NextWorkflowWorkItem")
 	if !strings.Contains(workflow, "ORDER BY [SequenceNumber] ASC") {
 		t.Fatal("NewEvents dequeue does not explicitly ORDER BY SequenceNumber ASC")
 	}
+}
+
+func TestWorkflowDequeueChecksReturningCursorErrors(t *testing.T) {
+	source, err := os.ReadFile("sqlite.go")
+	if err != nil {
+		t.Fatalf("read sqlite.go: %v", err)
+	}
+	workflow := functionRegion(t, string(source), "func (be *sqliteBackend) getWorkflowWorkItem", "func (be *sqliteBackend) NextWorkflowWorkItem")
+
+	closeIndex := strings.LastIndex(workflow, "events.Close()")
+	errIndex := strings.Index(workflow, "events.Err()")
+	commitIndex := strings.Index(workflow, "tx.Commit()")
+	if strings.Count(workflow, "events.Close()") < 2 || closeIndex < 0 || errIndex < 0 || commitIndex < 0 || closeIndex > errIndex || errIndex > commitIndex {
+		t.Fatal("workflow dequeue must close and check the UPDATE RETURNING cursor before committing")
+	}
+}
+
+func functionRegion(t *testing.T, source, startMarker, endMarker string) string {
+	t.Helper()
+	start := strings.Index(source, startMarker)
+	if start < 0 {
+		t.Fatalf("start marker %q not found", startMarker)
+	}
+	endRel := strings.Index(source[start:], endMarker)
+	if endRel < 0 {
+		t.Fatalf("end marker %q not found", endMarker)
+	}
+	return source[start : start+endRel]
 }
 
 func newRegressionBackend(t *testing.T, workflowLease, activityLease time.Duration) *sqliteBackend {

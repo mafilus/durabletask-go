@@ -1068,6 +1068,10 @@ func (be *postgresBackend) GetWorkflowWorkItem(ctx context.Context) (*backend.Wo
 
 		dequeuedEvents = append(dequeuedEvents, dequeuedEvent{sequenceNumber: sequenceNumber, event: e})
 	}
+	events.Close()
+	if err := events.Err(); err != nil {
+		return nil, fmt.Errorf("failed to finish reading workflow work-items: %w", err)
+	}
 	sort.Slice(dequeuedEvents, func(i, j int) bool {
 		return dequeuedEvents[i].sequenceNumber < dequeuedEvents[j].sequenceNumber
 	})

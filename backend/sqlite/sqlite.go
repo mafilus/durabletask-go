@@ -901,6 +901,7 @@ func (be *sqliteBackend) getWorkflowWorkItem(ctx context.Context) (*backend.Work
 	if err != nil {
 		return nil, fmt.Errorf("failed to query for workflow work-items: %w", err)
 	}
+	defer events.Close()
 
 	maxDequeueCount := int32(0)
 
@@ -927,6 +928,12 @@ func (be *sqliteBackend) getWorkflowWorkItem(ctx context.Context) (*backend.Work
 		}
 
 		dequeuedEvents = append(dequeuedEvents, dequeuedEvent{sequenceNumber: sequenceNumber, event: e})
+	}
+	if err := events.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close workflow work-items: %w", err)
+	}
+	if err := events.Err(); err != nil {
+		return nil, fmt.Errorf("failed to finish reading workflow work-items: %w", err)
 	}
 	sort.Slice(dequeuedEvents, func(i, j int) bool {
 		return dequeuedEvents[i].sequenceNumber < dequeuedEvents[j].sequenceNumber

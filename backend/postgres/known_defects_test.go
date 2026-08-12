@@ -57,6 +57,21 @@ func TestDequeueQueriesDeclareFIFOOrdering(t *testing.T) {
 	}
 }
 
+func TestWorkflowDequeueChecksReturningCursorErrors(t *testing.T) {
+	sourceBytes, err := os.ReadFile("postgres.go")
+	if err != nil {
+		t.Fatalf("read postgres.go: %v", err)
+	}
+	workflow := functionRegion(t, string(sourceBytes), "func (be *postgresBackend) GetWorkflowWorkItem", "func (be *postgresBackend) getActivityWorkItem")
+
+	closeIndex := strings.LastIndex(workflow, "events.Close()")
+	errIndex := strings.Index(workflow, "events.Err()")
+	commitIndex := strings.Index(workflow, "tx.Commit(ctx)")
+	if strings.Count(workflow, "events.Close()") < 2 || closeIndex < 0 || errIndex < 0 || commitIndex < 0 || closeIndex > errIndex || errIndex > commitIndex {
+		t.Fatal("workflow dequeue must close and check the UPDATE RETURNING cursor before committing")
+	}
+}
+
 func functionRegion(t *testing.T, source, startMarker, endMarker string) string {
 	t.Helper()
 	start := strings.Index(source, startMarker)
