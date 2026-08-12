@@ -5,6 +5,8 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -1292,8 +1294,13 @@ func (be *postgresBackend) ensureDB() error {
 }
 
 func (be *postgresBackend) String() string {
-	connectionURI := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s", be.options.PgOptions.ConnConfig.User, be.options.PgOptions.ConnConfig.Password, be.options.PgOptions.ConnConfig.Host, be.options.PgOptions.ConnConfig.Port, be.options.PgOptions.ConnConfig.Database)
-	return connectionURI
+	connConfig := be.options.PgOptions.ConnConfig
+	return (&url.URL{
+		Scheme: "postgresql",
+		User:   url.User(connConfig.User),
+		Host:   net.JoinHostPort(connConfig.Host, fmt.Sprint(connConfig.Port)),
+		Path:   connConfig.Database,
+	}).String()
 }
 
 func (be *postgresBackend) RerunWorkflowFromEvent(ctx context.Context, req *backend.RerunWorkflowFromEventRequest) (api.InstanceID, error) {
