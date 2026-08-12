@@ -90,6 +90,40 @@ func Test_SingleTimer(t *testing.T) {
 	)
 }
 
+func Test_WorkflowTurnSpansUseDistinctCurrentTimestamps(t *testing.T) {
+	r := task.NewTaskRegistry()
+	r.AddWorkflowN("WorkflowTurnSpans", func(ctx *task.WorkflowContext) (any, error) {
+		if err := ctx.CreateTimer(100 * time.Millisecond).Await(nil); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	})
+
+	ctx := context.Background()
+	exporter := utils.InitTracing()
+	client, worker := initTaskHubWorker(ctx, r)
+	defer worker.Shutdown(ctx)
+
+	id, err := client.ScheduleNewWorkflow(ctx, "WorkflowTurnSpans")
+	require.NoError(t, err)
+	metadata, err := client.WaitForWorkflowCompletion(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, protos.OrchestrationStatus_ORCHESTRATION_STATUS_COMPLETED, metadata.RuntimeStatus)
+
+	var workflowTurns []trace.ReadOnlySpan
+	for _, span := range exporter.GetSpans().Snapshots() {
+		if span.Name() == "orchestration||WorkflowTurnSpans" {
+			workflowTurns = append(workflowTurns, span)
+		}
+	}
+	require.Len(t, workflowTurns, 2, "each durable execution turn must be exported")
+	sort.Slice(workflowTurns, func(i, j int) bool {
+		return workflowTurns[i].StartTime().Before(workflowTurns[j].StartTime())
+	})
+	require.True(t, workflowTurns[0].StartTime().Before(workflowTurns[1].StartTime()),
+		"a resumed turn must start after the preceding turn, not at the workflow's initial timestamp")
+}
+
 func Test_ConcurrentTimers(t *testing.T) {
 	// Registration
 	r := task.NewTaskRegistry()
