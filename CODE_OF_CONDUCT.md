@@ -1,9 +1,10 @@
-# Microsoft Open Source Code of Conduct
+# Code of Conduct
 
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
+We want this project to be a friendly, useful place to collaborate.
 
-Resources:
+- Be nice.
+- Be open to different perspectives and constructive feedback.
+- Be respectful of other contributors' time, work, and lived experience.
 
-- [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/)
-- [Microsoft Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/)
-- Contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with questions or concerns
+If a conversation stops being constructive, pause, step back, and help bring it
+back to a respectful technical discussion.
