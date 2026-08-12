@@ -966,6 +966,9 @@ func (be *postgresBackend) GetInstanceHistory(ctx context.Context, wi *backend.G
 
 		events = append(events, e)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to finish reading history events: %w", err)
+	}
 
 	return &backend.GetInstanceHistoryResponse{
 		Events: events,
@@ -991,6 +994,9 @@ func (be *postgresBackend) ListInstanceIDs(ctx context.Context, wi *backend.List
 		}
 
 		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to finish reading instance IDs: %w", err)
 	}
 
 	return &backend.ListInstanceIDsResponse{

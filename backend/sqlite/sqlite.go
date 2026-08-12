@@ -829,6 +829,7 @@ func (be *sqliteBackend) GetWorkflowRuntimeState(ctx context.Context, wi *backen
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 
 	existingEvents := make([]*protos.HistoryEvent, 0, 50)
 	for rows.Next() {
@@ -843,6 +844,9 @@ func (be *sqliteBackend) GetWorkflowRuntimeState(ctx context.Context, wi *backen
 		}
 
 		existingEvents = append(existingEvents, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to finish reading history events: %w", err)
 	}
 
 	state := runtimestate.NewWorkflowRuntimeState(string(wi.InstanceID), nil, existingEvents)
@@ -1245,6 +1249,9 @@ func (be *sqliteBackend) GetInstanceHistory(ctx context.Context, wi *backend.Get
 
 		events = append(events, e)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to finish reading history events: %w", err)
+	}
 
 	return &backend.GetInstanceHistoryResponse{
 		Events: events,
@@ -1270,6 +1277,9 @@ func (be *sqliteBackend) ListInstanceIDs(ctx context.Context, wi *backend.ListIn
 		}
 
 		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to finish reading instance IDs: %w", err)
 	}
 
 	return &backend.ListInstanceIDsResponse{
