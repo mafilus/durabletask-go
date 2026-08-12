@@ -245,9 +245,35 @@ func ConfigureZipkinTracing() (*trace.TracerProvider, error) {
 }
 ```
 
-You can find this code in the [distributedtracing](./samples/distributedtracing) sample. The following is a screenshot showing the trace for the sample's orchestration, which calls an activity, creates a 2-second durable timer, and uses another activity to make an HTTP request to bing.com:
+You can find this code in the [distributedtracing](./samples/distributedtracing) sample.
 
-![image](https://user-images.githubusercontent.com/2704139/205171291-8d12d6fe-5d4f-40c7-9a48-2586a4c4af49.png)
+### Example trace
+
+The sample orchestration produces a distributed trace similar to the following:
+
+| Span | Type / Service | Duration | Parent |
+|---|---|---:|---|
+| `create_orchestration\|\|distributedtracesampleorchestrator` | `sample-app` | 883 µs | — |
+| `orchestration\|\|distributedtracesampleorchestrator` | Orchestration | 3.506 s | Create orchestration |
+| `activity\|\|doworkactivity` | Activity | 1.001 s | Orchestration |
+| `timer` | Durable timer | 2.060 s | Orchestration |
+| `activity\|\|callhttpendpointactivity` | Activity | 217.801 ms | Orchestration |
+| `http get` | `bing.com` | 118.401 ms | HTTP activity |
+
+The complete trace contains **6 spans**, has a maximum depth of **4**, and
+completes in approximately **3.5 seconds**.
+
+The orchestration span exposes Durable Task metadata through OpenTelemetry
+attributes, including:
+
+| Attribute | Example value |
+|---|---|
+| `durabletask.runtime_status` | `COMPLETED` |
+| `durabletask.task.instance_id` | orchestration instance ID |
+| `durabletask.task.name` | `DistributedTraceSampleOrchestrator` |
+| `durabletask.type` | `orchestration` |
+| `otel.library.name` | `durabletask` |
+| `service.name` | `sample-app` |
 
 Note that each orchestration is represented as a single span with activities, timers, and sub-orchestrations as child spans. The generated spans contain a variety of attributes that include information such as orchestration instance IDs, task names, task IDs, etc.
 
