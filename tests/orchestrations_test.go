@@ -15,7 +15,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/sdk/trace"
 
 	"github.com/mafilus/durabletask-go/api"
 	"github.com/mafilus/durabletask-go/api/protos"
@@ -781,22 +783,46 @@ func Test_ContinueAsNew(t *testing.T) {
 		}
 	}
 
-	// Validate the exported OTel traces
+	// Validate the exported OTel traces. Each durable execution turn is now a
+	// regular OTel span, so replay and ContinueAsNew turns are exported instead
+	// of being retroactively marked unsampled.
 	spans := exporter.GetSpans().Snapshots()
-	utils.AssertSpanSequence(t, spans,
-		utils.AssertWorkflowCreated("ContinueAsNewTest", id),
-		utils.AssertTimer(id), utils.AssertWorkflowExecuted("ContinueAsNewTest", id, "CONTINUED_AS_NEW"),
-		utils.AssertTimer(id), utils.AssertWorkflowExecuted("ContinueAsNewTest", id, "CONTINUED_AS_NEW"),
-		utils.AssertTimer(id), utils.AssertWorkflowExecuted("ContinueAsNewTest", id, "CONTINUED_AS_NEW"),
-		utils.AssertTimer(id), utils.AssertWorkflowExecuted("ContinueAsNewTest", id, "CONTINUED_AS_NEW"),
-		utils.AssertTimer(id), utils.AssertWorkflowExecuted("ContinueAsNewTest", id, "CONTINUED_AS_NEW"),
-		utils.AssertTimer(id), utils.AssertWorkflowExecuted("ContinueAsNewTest", id, "CONTINUED_AS_NEW"),
-		utils.AssertTimer(id), utils.AssertWorkflowExecuted("ContinueAsNewTest", id, "CONTINUED_AS_NEW"),
-		utils.AssertTimer(id), utils.AssertWorkflowExecuted("ContinueAsNewTest", id, "CONTINUED_AS_NEW"),
-		utils.AssertTimer(id), utils.AssertWorkflowExecuted("ContinueAsNewTest", id, "CONTINUED_AS_NEW"),
-		utils.AssertTimer(id), utils.AssertWorkflowExecuted("ContinueAsNewTest", id, "CONTINUED_AS_NEW"),
-		utils.AssertWorkflowExecuted("ContinueAsNewTest", id, "COMPLETED"),
-	)
+	created, timers, continued, completed, nonTerminal := countContinueAsNewSpans(spans)
+	require.Equal(t, 1, created)
+	require.Equal(t, 10, timers)
+	require.Equal(t, 10, continued)
+	require.Equal(t, 1, completed)
+	require.Positive(t, nonTerminal)
+}
+
+func countContinueAsNewSpans(spans []trace.ReadOnlySpan) (created, timers, continued, completed, nonTerminal int) {
+	for _, span := range spans {
+		switch span.Name() {
+		case "create_orchestration||ContinueAsNewTest":
+			created++
+		case "timer":
+			timers++
+		case "orchestration||ContinueAsNewTest":
+			switch spanAttribute(span, "durabletask.runtime_status") {
+			case "CONTINUED_AS_NEW":
+				continued++
+			case "COMPLETED":
+				completed++
+			default:
+				nonTerminal++
+			}
+		}
+	}
+	return created, timers, continued, completed, nonTerminal
+}
+
+func spanAttribute(span trace.ReadOnlySpan, key attribute.Key) string {
+	for _, value := range span.Attributes() {
+		if value.Key == key {
+			return value.Value.AsString()
+		}
+	}
+	return ""
 }
 
 func Test_ContinueAsNew_Events(t *testing.T) {
@@ -2078,7 +2104,6 @@ func Test_StartedAt_AfterExecution(t *testing.T) {
 	assert.False(t, startedAt.Before(metadata.CreatedAt.AsTime()),
 		"StartedAt %v should be >= CreatedAt %v", startedAt, metadata.CreatedAt.AsTime())
 }
-
 
 func Test_StartedAt_WithScheduleTime(t *testing.T) {
 	r := task.NewTaskRegistry()

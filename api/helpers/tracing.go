@@ -5,10 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"reflect"
 	"strings"
 	"time"
-	"unsafe"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -101,25 +99,6 @@ func startNewSpan(
 		trace.WithAttributes(attributes...),
 	)
 	return ctx, span
-}
-
-func UnsafeSetSpanContext(span trace.Span, spanContext trace.SpanContext) bool {
-	if !span.IsRecording() {
-		// this logic only applies to recording spans
-		return false
-	}
-	spanPtr := reflect.ValueOf(span)
-	spanVal := reflect.Indirect(spanPtr)
-	spanContextField := spanVal.FieldByName("spanContext")
-	if !spanContextField.IsValid() || spanContextField.IsZero() {
-		// The spanContext field doesn't exist
-		return false
-	}
-	// TODO: Validate the type of the field?
-	spanContextPtr := unsafe.Pointer(spanContextField.UnsafeAddr())
-	realPtrToSpanContext := (*trace.SpanContext)(spanContextPtr)
-	*realPtrToSpanContext = spanContext
-	return true
 }
 
 func ContextFromTraceContext(ctx context.Context, tc *protos.TraceContext) (context.Context, error) {
@@ -237,19 +216,6 @@ func NewRootTraceContext() *protos.TraceContext {
 	}
 	return &protos.TraceContext{
 		TraceParent: "00-" + traceID.String() + "-" + spanID.String() + "-01",
-	}
-}
-
-func ChangeSpanID(span trace.Span, newSpanID trace.SpanID) {
-	modifiedSpanContext := span.SpanContext().WithSpanID(newSpanID)
-	UnsafeSetSpanContext(span, modifiedSpanContext)
-}
-
-func CancelSpan(span trace.Span) {
-	if span.SpanContext().IsSampled() {
-		// set the IsSampled flag to 0 (not sampled)
-		modifiedSpanContext := span.SpanContext().WithTraceFlags(trace.TraceFlags(0))
-		UnsafeSetSpanContext(span, modifiedSpanContext)
 	}
 }
 

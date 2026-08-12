@@ -10,7 +10,6 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	"github.com/mafilus/durabletask-go/api"
 	"github.com/mafilus/durabletask-go/api/helpers"
@@ -173,7 +172,7 @@ func (w *workflowProcessor) ProcessWorkItem(ctx context.Context, wi *WorkflowWor
 
 				// We create a new trace span for every continue-as-new
 				w.endWorkflowSpan(ctx, wi, span, true)
-				ctx, span = w.startOrResumeWorkflowSpan(ctx, wi)
+				ctx, span = w.startOrResumeWorkflowSpan(ctx, wi, time.Now().UTC())
 				continue
 			}
 
@@ -214,19 +213,18 @@ func (w *workflowProcessor) applyWorkItem(ctx context.Context, wi *WorkflowWorkI
 
 	// The workflow started event is used primarily for updating the current time as reported
 	// by the workflow context APIs.
+	turnStartedAt := time.Now().UTC()
 	_ = runtimestate.AddEvent(wi.State, &protos.HistoryEvent{
 		EventId:   -1,
-		Timestamp: timestamppb.Now(),
+		Timestamp: timestamppb.New(turnStartedAt),
 		EventType: &protos.HistoryEvent_WorkflowStarted{
 			WorkflowStarted: &protos.WorkflowStartedEvent{},
 		},
 	})
 
-	// Each workflow instance gets its own distributed tracing span. However, the implementation of
-	// endWorkflowSpan will "cancel" the span mark the span as "unsampled" if the workflow isn't
-	// complete. This is part of the strategy for producing one span for the entire workflow execution,
-	// which isn't something that's natively supported by OTel today.
-	ctx, span := w.startOrResumeWorkflowSpan(ctx, wi)
+	// Each durable execution turn receives its own span. The persisted trace
+	// context is its parent, while OpenTelemetry owns the span ID and sampling.
+	ctx, span := w.startOrResumeWorkflowSpan(ctx, wi, turnStartedAt)
 
 	// New events from the work item are appended to the workflow state, with duplicates automatically
 	// filtered out. If all events are filtered out, return false so that the caller knows not to execute
@@ -285,7 +283,7 @@ func getWorkflowStateDescription(wi *WorkflowWorkItem) string {
 	return fmt.Sprintf("name=%s, status=%s, events=%d, age=%s", name, status, len(wi.State.OldEvents), ageStr)
 }
 
-func (w *workflowProcessor) startOrResumeWorkflowSpan(ctx context.Context, wi *WorkflowWorkItem) (context.Context, trace.Span) {
+func (w *workflowProcessor) startOrResumeWorkflowSpan(ctx context.Context, wi *WorkflowWorkItem, turnStartedAt time.Time) (context.Context, trace.Span) {
 	// Get the trace context from the ExecutionStarted history event
 	var ptc *protos.TraceContext
 	var es *protos.ExecutionStartedEvent
@@ -312,22 +310,7 @@ func (w *workflowProcessor) startOrResumeWorkflowSpan(ctx context.Context, wi *W
 
 	// start a new span from the updated go context
 	var span trace.Span
-	ctx, span = helpers.StartNewRunWorkflowSpan(ctx, es, runtimestate.GetStartedTime(wi.State))
-
-	// Assign or rehydrate the long-running workflow span ID
-	if es.WorkflowSpanID == nil {
-		// On the initial execution, assign the workflow span ID to be the
-		// randomly generated span ID value. This will be persisted in the workflow history
-		// and referenced on the next replay.
-		es.WorkflowSpanID = wrapperspb.String(span.SpanContext().SpanID().String())
-	} else {
-		// On subsequent executions, replace the auto-generated span ID with the workflow
-		// span ID. This allows us to have one long-running span that survives multiple replays
-		// and process failures.
-		if workflowSpanID, err := trace.SpanIDFromHex(es.WorkflowSpanID.Value); err == nil {
-			helpers.ChangeSpanID(span, workflowSpanID)
-		}
-	}
+	ctx, span = helpers.StartNewRunWorkflowSpan(ctx, es, turnStartedAt)
 
 	return ctx, span
 }
@@ -349,9 +332,9 @@ func (w *workflowProcessor) endWorkflowSpan(ctx context.Context, wi *WorkflowWor
 			Value: attribute.StringValue(helpers.ToRuntimeStatusString(protos.OrchestrationStatus_ORCHESTRATION_STATUS_CONTINUED_AS_NEW)),
 		})
 	} else {
-		// Cancel the span - we want to publish it only when a workflow
-		// completes or when it continue-as-new's.
-		helpers.CancelSpan(span)
+		// A workflow can span multiple durable execution turns. Each turn is a
+		// regular child span of the persisted parent context and is ended here;
+		// OpenTelemetry owns its identifiers and sampling decision.
 	}
 
 	// We must always call End() on a span to ensure we don't leak resources.
