@@ -307,6 +307,22 @@ The following is the expected output:
 
 At this point you can use one of the [language SDKs](#language-sdks) mentioned earlier in a separate process to implement and execute durable orchestrations. Those SDKs will connect to port `4001` by default to interact with the Durable Task engine.
 
+### gRPC listener security
+
+The server and container image bind to loopback (`127.0.0.1`) by default. Plaintext gRPC is allowed only for a loopback listener, intended for local development or a trusted local proxy.
+
+To bind to a non-loopback address, configure mTLS and an allowlist of client certificate URI SANs. The server rejects startup otherwise:
+
+```bash
+export DURABLETASK_GRPC_HOST=0.0.0.0
+export DURABLETASK_GRPC_TLS_CERT_FILE=/run/tls/server.crt
+export DURABLETASK_GRPC_TLS_KEY_FILE=/run/tls/server.key
+export DURABLETASK_GRPC_CLIENT_CA_FILE=/run/tls/client-ca.crt
+export DURABLETASK_GRPC_ALLOWED_CLIENT_URIS=spiffe://example.org/durabletask/client
+```
+
+`DURABLETASK_GRPC_PORT` overrides the listener port. When exposing a container port, also apply a network policy that limits clients to the intended identities and network paths.
+
 ## Contributing
 
 This project welcomes contributions and suggestions.  Most contributions require you to agree to a
