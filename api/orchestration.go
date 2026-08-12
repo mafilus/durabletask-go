@@ -11,7 +11,7 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	"github.com/mafilus/durabletask-go/api/protos"
-	"github.com/dapr/kit/ptr"
+	"github.com/mafilus/durabletask-go/internal/ptr"
 )
 
 type OrchestrationStatus = protos.OrchestrationStatus

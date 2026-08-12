@@ -384,11 +384,8 @@ func PropagatedHistoryFromProto(ph *protos.PropagatedHistory) (*PropagatedHistor
 }
 
 // ValidatePropagatedHistory checks the structural shape of a wire-form
-// PropagatedHistory before any decoding or trust decisions: each chunk must
-// be non-nil and carry a non-empty appId. Signing-material checks
-// (rawSignatures / signingCertChains alignment, cert chain-of-trust,
-// signature verification) live in historysigning.VerifyPropagatedHistory,
-// not here - this function is the lightweight structural gate.
+// PropagatedHistory before decoding: each chunk must be non-nil and carry a
+// non-empty appId.
 func ValidatePropagatedHistory(ph *protos.PropagatedHistory) error {
 	for i, c := range ph.GetChunks() {
 		if c == nil {
@@ -400,4 +397,3 @@ func ValidatePropagatedHistory(ph *protos.PropagatedHistory) error {
 	}
 	return nil
 }
-

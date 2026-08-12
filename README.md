@@ -351,7 +351,7 @@ export DURABLETASK_GRPC_HOST=0.0.0.0
 export DURABLETASK_GRPC_TLS_CERT_FILE=/run/tls/server.crt
 export DURABLETASK_GRPC_TLS_KEY_FILE=/run/tls/server.key
 export DURABLETASK_GRPC_CLIENT_CA_FILE=/run/tls/client-ca.crt
-export DURABLETASK_GRPC_ALLOWED_CLIENT_URIS=spiffe://example.org/durabletask/client
+export DURABLETASK_GRPC_ALLOWED_CLIENT_URIS=urn:durabletask:client
 ```
 
 `DURABLETASK_GRPC_PORT` overrides the listener port. When exposing a container port, also apply a network policy that limits clients to the intended identities and network paths.

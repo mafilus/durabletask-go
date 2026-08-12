@@ -5,7 +5,7 @@ import (
 
 	"github.com/mafilus/durabletask-go/api"
 	"github.com/mafilus/durabletask-go/api/protos"
-	"github.com/dapr/kit/ptr"
+	"github.com/mafilus/durabletask-go/internal/ptr"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 

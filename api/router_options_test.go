@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mafilus/durabletask-go/api/protos"
-	"github.com/dapr/kit/ptr"
+	"github.com/mafilus/durabletask-go/internal/ptr"
 )
 
 func TestWithAppIDOptions_SetTargetOnRouter(t *testing.T) {

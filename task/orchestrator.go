@@ -17,7 +17,7 @@ import (
 	"github.com/mafilus/durabletask-go/api/helpers"
 	"github.com/mafilus/durabletask-go/api/protos"
 	"github.com/mafilus/durabletask-go/backend"
-	"github.com/dapr/kit/ptr"
+	"github.com/mafilus/durabletask-go/internal/ptr"
 )
 
 // externalEventIndefiniteFireAt is the sentinel fire-at value used for the

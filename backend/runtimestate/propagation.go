@@ -15,7 +15,7 @@ package runtimestate
 
 import (
 	"github.com/mafilus/durabletask-go/api/protos"
-	"github.com/mafilus/durabletask-go/backend/historysigning"
+	"google.golang.org/protobuf/proto"
 )
 
 // Only forward what the wf already received from its parent, no default. If the
@@ -31,15 +31,11 @@ func canForwardScope(receivedHistory *protos.PropagatedHistory) protos.HistoryPr
 // AssembleProtoPropagatedHistory builds a proto PropagatedHistory from the
 // current workflow's runtime state, using the given propagation scope.
 // receivedHistory is the propagated history this workflow received from its
-// own parent — used when scope is LINEAGE. appID is the current app's Dapr
-// app ID, used to tag the chunk of events produced by this workflow.
+// own parent — used when scope is LINEAGE. appID identifies the app that
+// produced the chunk.
 //
-// Each chunk owns its own rawEvents bytes. For the current workflow's own
-// chunk, events are marshaled deterministically here (same encoding as
-// historysigning.MarshalEvent) so the bytes the producer signs match the
-// bytes receivers digest. Lineage chunks pass through verbatim - their
-// rawEvents and signatures were attached at the upstream producer's
-// dispatch and travel with the chain.
+// Each chunk owns its rawEvents bytes. For the current workflow's own chunk,
+// events are marshaled here; lineage chunks pass through verbatim.
 func AssembleProtoPropagatedHistory(
 	state *protos.WorkflowRuntimeState,
 	scope protos.HistoryPropagationScope,
@@ -76,7 +72,7 @@ func AssembleProtoPropagatedHistory(
 
 		rawEvents := make([][]byte, len(ownEvents))
 		for i, e := range ownEvents {
-			b, err := historysigning.MarshalEvent(e)
+			b, err := proto.Marshal(e)
 			if err != nil {
 				return nil, err
 			}

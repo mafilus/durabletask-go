@@ -14,7 +14,7 @@ import (
 	"github.com/mafilus/durabletask-go/api"
 	"github.com/mafilus/durabletask-go/api/protos"
 	"github.com/mafilus/durabletask-go/backend"
-	"github.com/dapr/kit/ptr"
+	"github.com/mafilus/durabletask-go/internal/ptr"
 )
 
 // REVIEW: Can this be merged with backend/client.go somehow?

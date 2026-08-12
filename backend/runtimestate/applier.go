@@ -23,7 +23,7 @@ import (
 
 	"github.com/mafilus/durabletask-go/api/helpers"
 	"github.com/mafilus/durabletask-go/api/protos"
-	"github.com/dapr/kit/ptr"
+	"github.com/mafilus/durabletask-go/internal/ptr"
 )
 
 type Applier struct {
