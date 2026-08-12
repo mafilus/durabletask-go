@@ -272,7 +272,7 @@ func (be *sqliteBackend) CompleteWorkflowWorkItem(ctx context.Context, wi *backe
 	if err != nil {
 		return fmt.Errorf("failed to get the number of rows affected by the Instance table update: %w", err)
 	} else if count == 0 {
-		return fmt.Errorf("instance '%s' no longer exists or was locked by a different worker", string(wi.InstanceID))
+		return backend.ErrWorkItemLockLost
 	}
 
 	// If continue-as-new, delete all existing history

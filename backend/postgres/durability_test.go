@@ -230,8 +230,8 @@ func TestWorkflowReacquiredBySameBackendRejectsStaleCompletion(t *testing.T) {
 		t.Fatal("same backend reused the workflow lease token")
 	}
 
-	if err := be.CompleteWorkflowWorkItem(ctx, first); err == nil {
-		t.Fatal("stale workflow completion succeeded")
+	if err := be.CompleteWorkflowWorkItem(ctx, first); !errors.Is(err, backend.ErrWorkItemLockLost) {
+		t.Fatalf("stale workflow completion error=%v, want %v", err, backend.ErrWorkItemLockLost)
 	}
 	if got := countRows(t, ctx, be, "History"); got != 0 {
 		t.Fatalf("stale workflow completion leaked %d history row(s)", got)

@@ -44,6 +44,23 @@ func TestActivityDequeueOrdersSequenceNumbers(t *testing.T) {
 	}
 }
 
+func TestWorkflowCompletionRejectsLostLease(t *testing.T) {
+	ctx := context.Background()
+	be := newRegressionBackend(t, time.Second, time.Second)
+	instanceID := "lost-workflow-lease"
+	insertRegressionWorkflow(t, ctx, be, instanceID, 1)
+
+	wi, err := be.getWorkflowWorkItem(ctx)
+	if err != nil {
+		t.Fatalf("acquire workflow: %v", err)
+	}
+	wi.LockedBy = "stale-lease-token"
+	wi.State = &protos.WorkflowRuntimeState{InstanceId: instanceID}
+	if err := be.CompleteWorkflowWorkItem(ctx, wi); !errors.Is(err, backend.ErrWorkItemLockLost) {
+		t.Fatalf("complete stale workflow error=%v, want %v", err, backend.ErrWorkItemLockLost)
+	}
+}
+
 func TestWorkflowDequeueDeclaresFIFOOrdering(t *testing.T) {
 	source, err := os.ReadFile("sqlite.go")
 	if err != nil {
@@ -104,5 +121,19 @@ func insertRegressionActivity(t *testing.T, ctx context.Context, be *sqliteBacke
 	}
 	if _, err := be.db.ExecContext(ctx, "INSERT INTO NewTasks ([InstanceID], [EventPayload]) VALUES (?, ?)", instanceID, payload); err != nil {
 		t.Fatalf("insert activity: %v", err)
+	}
+}
+
+func insertRegressionWorkflow(t *testing.T, ctx context.Context, be *sqliteBackend, instanceID string, eventID int32) {
+	t.Helper()
+	if _, err := be.db.ExecContext(ctx, "INSERT INTO Instances ([InstanceID], [ExecutionID], [Name], [RuntimeStatus]) VALUES (?, ?, ?, 'PENDING')", instanceID, "execution-1", "regression-test"); err != nil {
+		t.Fatalf("insert workflow instance: %v", err)
+	}
+	payload, err := backend.MarshalHistoryEvent(&protos.HistoryEvent{EventId: eventID, Timestamp: timestamppb.Now()})
+	if err != nil {
+		t.Fatalf("marshal workflow event: %v", err)
+	}
+	if _, err := be.db.ExecContext(ctx, "INSERT INTO NewEvents ([InstanceID], [EventPayload]) VALUES (?, ?)", instanceID, payload); err != nil {
+		t.Fatalf("insert workflow event: %v", err)
 	}
 }
