@@ -1,0 +1,49 @@
+name: OpenTelemetry Collector integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  otlp-collector:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Start OpenTelemetry Collector
+        run: docker compose -f .github/otel-collector.compose.yml -p durabletask-otel up -d --wait
+
+      - name: Run OTLP end-to-end test
+        env:
+          STRIX_TEST_OTLP_COLLECTOR: "1"
+        run: go test -tags 'integration otlpcollector' ./tests/... -count=1 -run '^TestIntegrationOTLPCollectorReceivesWorkflowSpan$' -v
+
+      - name: Capture Collector diagnostics
+        if: always()
+        run: docker compose -f .github/otel-collector.compose.yml -p durabletask-otel logs --no-color > otel-collector.log
+
+      - name: Upload Collector diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: otel-collector-${{ github.run_id }}-${{ github.run_attempt }}
+          path: otel-collector.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Stop OpenTelemetry Collector
+        if: always()
+        run: docker compose -f .github/otel-collector.compose.yml -p durabletask-otel down -v --remove-orphans
