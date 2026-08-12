@@ -21,7 +21,7 @@ type WorkflowMetadata protos.WorkflowMetadata
 type ListInstanceIDsResponse protos.ListInstanceIDsResponse
 type GetInstanceHistoryResponse protos.GetInstanceHistoryResponse
 
-func (w WorkflowMetadata) String() string {
+func (w *WorkflowMetadata) String() string {
 	switch w.RuntimeStatus {
 	case api.RUNTIME_STATUS_RUNNING:
 		return "RUNNING"

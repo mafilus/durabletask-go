@@ -97,7 +97,7 @@ func WorkflowMetadataIsRunning(o *WorkflowMetadata) bool {
 }
 
 func WorkflowMetadataIsComplete(o *WorkflowMetadata) bool {
-	return api.WorkflowMetadataIsComplete(ptr.Of(protos.WorkflowMetadata(*o)))
+	return api.WorkflowMetadataIsComplete((*protos.WorkflowMetadata)(o))
 }
 
 func WithRerunInput(input any) RerunOptions {

@@ -135,8 +135,9 @@ func (a *Applier) Actions(s *protos.WorkflowRuntimeState, customStatus *wrappers
 					_ = AddEvent(newState, e)
 				}
 
-				// Overwrite the current state object with a new one
-				*s = *newState
+				// Replace the application state without copying the protobuf
+				// message internals, which include synchronization state.
+				replaceWorkflowRuntimeState(s, newState)
 
 				// ignore all remaining actions
 				result.ContinuedAsNew = true
@@ -474,6 +475,25 @@ func (a *Applier) Actions(s *protos.WorkflowRuntimeState, customStatus *wrappers
 	}
 
 	return result, nil
+}
+
+func replaceWorkflowRuntimeState(destination, source *protos.WorkflowRuntimeState) {
+	destination.Reset()
+	destination.InstanceId = source.InstanceId
+	destination.NewEvents = source.NewEvents
+	destination.OldEvents = source.OldEvents
+	destination.PendingTasks = source.PendingTasks
+	destination.PendingTimers = source.PendingTimers
+	destination.PendingMessages = source.PendingMessages
+	destination.StartEvent = source.StartEvent
+	destination.CompletedEvent = source.CompletedEvent
+	destination.CreatedTime = source.CreatedTime
+	destination.LastUpdatedTime = source.LastUpdatedTime
+	destination.CompletedTime = source.CompletedTime
+	destination.ContinuedAsNew = source.ContinuedAsNew
+	destination.IsSuspended = source.IsSuspended
+	destination.CustomStatus = source.CustomStatus
+	destination.Stalled = source.Stalled
 }
 
 // parentInstanceInfo constructs the ParentInstanceInfo embedded in a
