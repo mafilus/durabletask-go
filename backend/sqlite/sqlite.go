@@ -121,7 +121,12 @@ func (be *sqliteBackend) CreateTaskHub(context.Context) error {
 }
 
 func (be *sqliteBackend) DeleteTaskHub(ctx context.Context) error {
-	be.db = nil
+	if be.db != nil {
+		if err := be.db.Close(); err != nil {
+			return fmt.Errorf("failed to close the database: %w", err)
+		}
+		be.db = nil
+	}
 
 	if be.options.FilePath == "" {
 		// In-memory DB
