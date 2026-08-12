@@ -25,6 +25,7 @@ import (
 
 	backoff "github.com/cenkalti/backoff/v4"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -42,11 +43,20 @@ type PostgresOptions struct {
 }
 
 type postgresBackend struct {
-	db         *pgxpool.Pool
+	db         postgresDB
 	workerName string
 	logger     backend.Logger
 	options    *PostgresOptions
 	*local.TasksBackend
+}
+
+type postgresDB interface {
+	Begin(context.Context) (pgx.Tx, error)
+	BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error)
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
+	Close()
 }
 
 func (be *postgresBackend) newLeaseToken() string {
