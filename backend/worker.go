@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"runtime"
 	"sync"
 )
 
@@ -37,10 +38,31 @@ type WorkerOptions struct {
 	MaxParallelWorkItems *int32
 }
 
-func NewWorkerOptions() *WorkerOptions {
-	return &WorkerOptions{}
+const (
+	minDefaultMaxParallelism int32 = 16
+	maxDefaultMaxParallelism int32 = 64
+)
+
+// DefaultMaxParallelism returns the default limit used by workflow and activity
+// workers. The limit keeps the number of in-flight work items bounded while
+// allowing enough concurrency for workloads that spend time waiting on I/O.
+func DefaultMaxParallelism() int32 {
+	maxParallelism := int32(4 * runtime.GOMAXPROCS(0))
+	if maxParallelism < minDefaultMaxParallelism {
+		return minDefaultMaxParallelism
+	}
+	if maxParallelism > maxDefaultMaxParallelism {
+		return maxDefaultMaxParallelism
+	}
+	return maxParallelism
 }
 
+func NewWorkerOptions() *WorkerOptions {
+	maxParallelism := DefaultMaxParallelism()
+	return &WorkerOptions{MaxParallelWorkItems: &maxParallelism}
+}
+
+// WithMaxParallelism overrides the default concurrency limit for a task worker.
 func WithMaxParallelism(n int32) NewTaskWorkerOptions {
 	return func(o *WorkerOptions) {
 		o.MaxParallelWorkItems = &n
@@ -48,18 +70,15 @@ func WithMaxParallelism(n int32) NewTaskWorkerOptions {
 }
 
 func NewTaskWorker[T WorkItem](p TaskProcessor[T], logger Logger, opts ...NewTaskWorkerOptions) TaskWorker[T] {
-	options := &WorkerOptions{}
+	options := NewWorkerOptions()
 	for _, configure := range opts {
 		configure(options)
 	}
 
-	var parallelLock chan struct{}
-	if options.MaxParallelWorkItems != nil {
-		if *options.MaxParallelWorkItems <= 0 {
-			panic("max parallelism must be greater than zero")
-		}
-		parallelLock = make(chan struct{}, *options.MaxParallelWorkItems)
+	if options.MaxParallelWorkItems == nil || *options.MaxParallelWorkItems <= 0 {
+		panic("max parallelism must be greater than zero")
 	}
+	parallelLock := make(chan struct{}, *options.MaxParallelWorkItems)
 
 	return &worker[T]{
 		processor:    p,
@@ -95,19 +114,15 @@ func (w *worker[T]) Start(ctx context.Context) {
 
 		for {
 
-			if w.parallelLock != nil {
-				select {
-				case w.parallelLock <- struct{}{}:
-				case <-ctx.Done():
-					return
-				}
+			select {
+			case w.parallelLock <- struct{}{}:
+			case <-ctx.Done():
+				return
 			}
 
 			wi, err := w.processor.NextWorkItem(ctx)
 			if err != nil {
-				if w.parallelLock != nil {
-					<-w.parallelLock
-				}
+				<-w.parallelLock
 
 				if ctx.Err() != nil {
 					return
@@ -120,9 +135,7 @@ func (w *worker[T]) Start(ctx context.Context) {
 			w.wg.Add(1)
 			go func() {
 				defer func() {
-					if w.parallelLock != nil {
-						<-w.parallelLock
-					}
+					<-w.parallelLock
 					w.wg.Done()
 				}()
 				w.processWorkItem(ctx, wi)
