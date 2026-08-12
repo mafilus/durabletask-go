@@ -2,11 +2,19 @@
 
 [![Build](https://github.com/mafilus/durabletask-go/actions/workflows/pr-validation.yml/badge.svg)](https://github.com/mafilus/durabletask-go/actions/workflows/pr-validation.yml)
 
+> [!IMPORTANT]
+> This repository is an independently maintained, hardened fork of Durable
+> Task for Go. Its lineage is Microsoft Durable Task for Go, then Dapr Durable
+> Task for Go, then this fork. It is maintained by Mafilus and is not
+> affiliated with, endorsed by, or supported by Microsoft or the Dapr project.
+>
+> Its primary goal is to freeze and stabilize API and runtime behavior for
+> production use. Changes favor compatibility, correctness, and operational
+> safety over upstream feature parity.
+
 The Durable Task Framework is a lightweight, embeddable engine for writing durable, fault-tolerant business logic (*orchestrations*) as ordinary code. The engine itself is written in Go and intended to be embedded into other Go-based processes. It exposes a gRPC endpoint to support writing durable flows in any language. There are currently SDKs that consume this gRPC endpoint for [.NET](https://github.com/microsoft/durabletask-dotnet) and [Java](https://github.com/microsoft/durabletask-java), with more to come. It's also possible to write orchestrations directly in Go and run them in the local process.
 
-This project is largely a Go clone of the [.NET-based Durable Task Framework](https://github.com/Azure/durabletask), which is used by various cloud service teams at Microsoft for building reliable control planes and managing infrastructure. It also takes inspiration from the [Go Workflows](https://github.com/cschleiden/go-workflows) project, which itself is a Go project that borrows heavily from both the Durable Task Framework and [Temporal](https://github.com/temporalio/temporal). The main difference is that the Durable Task engine is designed to be used in sidecar architectures.
-
-The Durable Task engine is also intended to be used as the basis for the [Dapr embedded workflow engine](https://github.com/dapr/dapr/issues/4576).
+The project originated as a Go clone of the [.NET-based Durable Task Framework](https://github.com/Azure/durabletask). It also takes inspiration from the [Go Workflows](https://github.com/cschleiden/go-workflows) project and [Temporal](https://temporal.io/). This fork is designed to be embedded in Go-based processes and sidecar-style deployments; it does not follow the product roadmap or contribution processes of its upstream projects.
 
 ## Storage providers
 
@@ -325,20 +333,28 @@ export DURABLETASK_GRPC_ALLOWED_CLIENT_URIS=spiffe://example.org/durabletask/cli
 
 ## Contributing
 
-This project welcomes contributions and suggestions.  Most contributions require you to agree to a
-Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us
-the rights to use your contribution. For details, visit https://cla.opensource.microsoft.com.
+Contributions and suggestions are welcome through this repository's issues and
+pull requests. For substantial changes, open an issue first so that scope and
+compatibility can be discussed.
 
-When you submit a pull request, a CLA bot will automatically determine whether you need to provide
-a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions
-provided by the bot. You will only need to do this once across all repos using our CLA.
+By submitting a contribution, you confirm that you have the right to submit it
+and agree that it is provided under the repository's Apache-2.0 license. No
+Microsoft or Dapr contributor-license agreement, bot, or governance process
+applies to this fork.
 
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
-For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or
-contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
+Please follow the repository's [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## License and provenance
+
+This repository is distributed under [Apache-2.0](LICENSE). Applicable
+copyright, license, and attribution notices from Microsoft, Dapr, and other
+upstream contributors are retained. Copyright notices for changes made in this
+fork identify their respective authors; they do not imply ownership of the
+entire repository.
 
 ## Trademarks
 
-This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft trademarks or logos is subject to and must follow [Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/legal/intellectualproperty/trademarks/usage/general).
-Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship.
-Any use of third-party trademarks or logos are subject to those third-party's policies.
+Third-party names and marks are used only to describe this repository's
+technical history and compatibility. They remain the property of their
+respective owners and do not imply affiliation with, endorsement of, or support
+for this fork.
