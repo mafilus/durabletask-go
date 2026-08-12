@@ -51,6 +51,10 @@ type sqliteBackend struct {
 	*local.TasksBackend
 }
 
+func (be *sqliteBackend) newLeaseToken() string {
+	return be.workerName + "," + uuid.NewString()
+}
+
 // NewSqliteOptions creates a new options object for the sqlite backend provider.
 //
 // Specify "" for filePath to configure an in-memory database.
@@ -867,6 +871,7 @@ func (be *sqliteBackend) getWorkflowWorkItem(ctx context.Context) (*backend.Work
 
 	now := time.Now().UTC()
 	newLockExpiration := now.Add(be.options.WorkflowLockTimeout)
+	leaseToken := be.newLeaseToken()
 
 	// Place a lock on a workflow instance that has new events that are ready to be executed.
 	row := tx.QueryRowContext(
@@ -881,7 +886,7 @@ func (be *sqliteBackend) getWorkflowWorkItem(ctx context.Context) (*backend.Work
 			ORDER BY I.[rowid] ASC
 			LIMIT 1
 		) RETURNING [InstanceID]`,
-		be.workerName,     // LockedBy for Instances table
+		leaseToken,        // LockedBy for Instances table
 		newLockExpiration, // Updated LockExpiration for Instances table
 		now,               // LockExpiration for Instances table
 		now,               // VisibleTime for NewEvents table
@@ -911,7 +916,7 @@ func (be *sqliteBackend) getWorkflowWorkItem(ctx context.Context) (*backend.Work
 			LIMIT 1000
 		)
 		RETURNING [SequenceNumber], [EventPayload], [DequeueCount]`,
-		be.workerName,
+		leaseToken,
 		instanceID,
 		now,
 	)
@@ -968,7 +973,7 @@ func (be *sqliteBackend) getWorkflowWorkItem(ctx context.Context) (*backend.Work
 	wi := &backend.WorkflowWorkItem{
 		InstanceID: api.InstanceID(instanceID),
 		NewEvents:  newEvents,
-		LockedBy:   be.workerName,
+		LockedBy:   leaseToken,
 		RetryCount: maxDequeueCount - 1,
 	}
 
@@ -1048,6 +1053,7 @@ func (be *sqliteBackend) getActivityWorkItem(ctx context.Context) (*backend.Acti
 
 	now := time.Now().UTC()
 	newLockExpiration := now.Add(be.options.ActivityLockTimeout)
+	leaseToken := be.newLeaseToken()
 
 	row := be.db.QueryRowContext(
 		ctx,
@@ -1058,7 +1064,7 @@ func (be *sqliteBackend) getActivityWorkItem(ctx context.Context) (*backend.Acti
 			ORDER BY T.[SequenceNumber] ASC
 			LIMIT 1
 		) RETURNING [SequenceNumber], [InstanceID], [EventPayload]`,
-		be.workerName,
+		leaseToken,
 		newLockExpiration,
 		now,
 	)
@@ -1089,7 +1095,7 @@ func (be *sqliteBackend) getActivityWorkItem(ctx context.Context) (*backend.Acti
 		SequenceNumber: sequenceNumber,
 		InstanceID:     api.InstanceID(instanceID),
 		NewEvent:       e,
-		LockedBy:       be.workerName,
+		LockedBy:       leaseToken,
 	}
 	return wi, nil
 }

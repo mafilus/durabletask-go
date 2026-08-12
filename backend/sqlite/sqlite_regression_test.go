@@ -61,6 +61,71 @@ func TestWorkflowCompletionRejectsLostLease(t *testing.T) {
 	}
 }
 
+func TestActivityReacquiredBySameBackendRejectsStaleCompletion(t *testing.T) {
+	ctx := context.Background()
+	be := newRegressionBackend(t, time.Second, 50*time.Millisecond)
+	insertRegressionActivity(t, ctx, be, "stale-activity", 1)
+
+	first, err := be.getActivityWorkItem(ctx)
+	if err != nil {
+		t.Fatalf("first activity acquisition: %v", err)
+	}
+	time.Sleep(120 * time.Millisecond)
+	second, err := be.getActivityWorkItem(ctx)
+	if err != nil {
+		t.Fatalf("same backend activity reacquisition: %v", err)
+	}
+	if second.LockedBy == first.LockedBy {
+		t.Fatal("same backend reused the activity lease token")
+	}
+
+	first.Result = regressionHistoryEvent(101)
+	if err := be.CompleteActivityWorkItem(ctx, first); !errors.Is(err, backend.ErrWorkItemLockLost) {
+		t.Fatalf("stale activity completion error=%v, want %v", err, backend.ErrWorkItemLockLost)
+	}
+	if got := countRegressionRows(t, ctx, be, "NewTasks"); got != 1 {
+		t.Fatalf("stale activity completion removed queued task: count=%d, want 1", got)
+	}
+
+	second.Result = regressionHistoryEvent(102)
+	if err := be.CompleteActivityWorkItem(ctx, second); err != nil {
+		t.Fatalf("current activity completion: %v", err)
+	}
+}
+
+func TestWorkflowReacquiredBySameBackendRejectsStaleCompletion(t *testing.T) {
+	ctx := context.Background()
+	be := newRegressionBackend(t, 50*time.Millisecond, time.Second)
+	instanceID := "stale-workflow"
+	insertRegressionWorkflow(t, ctx, be, instanceID, 1)
+
+	first, err := be.getWorkflowWorkItem(ctx)
+	if err != nil {
+		t.Fatalf("first workflow acquisition: %v", err)
+	}
+	first.State = &protos.WorkflowRuntimeState{InstanceId: instanceID, NewEvents: []*protos.HistoryEvent{regressionHistoryEvent(101)}}
+	time.Sleep(120 * time.Millisecond)
+	second, err := be.getWorkflowWorkItem(ctx)
+	if err != nil {
+		t.Fatalf("same backend workflow reacquisition: %v", err)
+	}
+	if second.LockedBy == first.LockedBy {
+		t.Fatal("same backend reused the workflow lease token")
+	}
+
+	if err := be.CompleteWorkflowWorkItem(ctx, first); !errors.Is(err, backend.ErrWorkItemLockLost) {
+		t.Fatalf("stale workflow completion error=%v, want %v", err, backend.ErrWorkItemLockLost)
+	}
+	if got := countRegressionRows(t, ctx, be, "NewEvents"); got != 1 {
+		t.Fatalf("stale workflow completion removed queued event: count=%d, want 1", got)
+	}
+
+	second.State = &protos.WorkflowRuntimeState{InstanceId: instanceID}
+	if err := be.CompleteWorkflowWorkItem(ctx, second); err != nil {
+		t.Fatalf("current workflow completion: %v", err)
+	}
+}
+
 func TestWorkflowDequeueDeclaresFIFOOrdering(t *testing.T) {
 	source, err := os.ReadFile("sqlite.go")
 	if err != nil {
@@ -136,4 +201,17 @@ func insertRegressionWorkflow(t *testing.T, ctx context.Context, be *sqliteBacke
 	if _, err := be.db.ExecContext(ctx, "INSERT INTO NewEvents ([InstanceID], [EventPayload]) VALUES (?, ?)", instanceID, payload); err != nil {
 		t.Fatalf("insert workflow event: %v", err)
 	}
+}
+
+func countRegressionRows(t *testing.T, ctx context.Context, be *sqliteBackend, table string) int {
+	t.Helper()
+	var count int
+	if err := be.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&count); err != nil {
+		t.Fatalf("count %s: %v", table, err)
+	}
+	return count
+}
+
+func regressionHistoryEvent(eventID int32) *protos.HistoryEvent {
+	return &protos.HistoryEvent{EventId: eventID, Timestamp: timestamppb.Now()}
 }
