@@ -212,8 +212,6 @@ func (be *postgresBackend) WatchWorkflowRuntimeStatus(ctx context.Context, id ap
 			}
 		}
 	}
-
-	return nil
 }
 
 // CreateTaskHub creates the postgres database and applies the schema

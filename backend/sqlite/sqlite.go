@@ -658,8 +658,6 @@ func (be *sqliteBackend) WatchWorkflowRuntimeStatus(ctx context.Context, id api.
 			}
 		}
 	}
-
-	return nil
 }
 
 // GetWorkflowMetadata implements backend.Backend
