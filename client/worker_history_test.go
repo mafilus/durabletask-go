@@ -22,8 +22,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 
-	"github.com/dapr/durabletask-go/api"
-	"github.com/dapr/durabletask-go/api/protos"
+	"github.com/mafilus/durabletask-go/api"
+	"github.com/mafilus/durabletask-go/api/protos"
 	"github.com/dapr/kit/ptr"
 )
 

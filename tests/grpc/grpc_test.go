@@ -19,13 +19,13 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
-	"github.com/dapr/durabletask-go/api"
-	"github.com/dapr/durabletask-go/api/protos"
-	"github.com/dapr/durabletask-go/backend"
-	"github.com/dapr/durabletask-go/backend/sqlite"
-	"github.com/dapr/durabletask-go/client"
-	"github.com/dapr/durabletask-go/task"
-	"github.com/dapr/durabletask-go/tests/utils"
+	"github.com/mafilus/durabletask-go/api"
+	"github.com/mafilus/durabletask-go/api/protos"
+	"github.com/mafilus/durabletask-go/backend"
+	"github.com/mafilus/durabletask-go/backend/sqlite"
+	"github.com/mafilus/durabletask-go/client"
+	"github.com/mafilus/durabletask-go/task"
+	"github.com/mafilus/durabletask-go/tests/utils"
 	"go.opentelemetry.io/otel"
 )
 

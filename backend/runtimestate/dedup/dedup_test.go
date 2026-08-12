@@ -21,9 +21,9 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
-	"github.com/dapr/durabletask-go/api/protos"
-	"github.com/dapr/durabletask-go/backend/runtimestate"
-	"github.com/dapr/durabletask-go/backend/runtimestate/dedup"
+	"github.com/mafilus/durabletask-go/api/protos"
+	"github.com/mafilus/durabletask-go/backend/runtimestate"
+	"github.com/mafilus/durabletask-go/backend/runtimestate/dedup"
 )
 
 func taskCompleted(id int32) *protos.HistoryEvent {

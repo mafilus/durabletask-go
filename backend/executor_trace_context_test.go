@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/dapr/durabletask-go/api/protos"
+	"github.com/mafilus/durabletask-go/api/protos"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

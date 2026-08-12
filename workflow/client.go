@@ -5,9 +5,9 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/dapr/durabletask-go/api"
-	"github.com/dapr/durabletask-go/backend"
-	"github.com/dapr/durabletask-go/client"
+	"github.com/mafilus/durabletask-go/api"
+	"github.com/mafilus/durabletask-go/backend"
+	"github.com/mafilus/durabletask-go/client"
 )
 
 type Client struct {

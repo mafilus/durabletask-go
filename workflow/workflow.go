@@ -5,7 +5,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
-	"github.com/dapr/durabletask-go/task"
+	"github.com/mafilus/durabletask-go/task"
 )
 
 // Workflow is the functional interface for workflow functions.

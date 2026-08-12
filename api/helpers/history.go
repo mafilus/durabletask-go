@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dapr/durabletask-go/api/protos"
+	"github.com/mafilus/durabletask-go/api/protos"
 )
 
 func HistoryListSummary(list []*protos.HistoryEvent) string {

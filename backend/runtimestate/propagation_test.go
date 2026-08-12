@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/dapr/durabletask-go/api/protos"
+	"github.com/mafilus/durabletask-go/api/protos"
 )
 
 func makeTaskScheduled(id int32, name string) *protos.HistoryEvent {

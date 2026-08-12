@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	backend "github.com/dapr/durabletask-go/backend"
+	backend "github.com/mafilus/durabletask-go/backend"
 )
 
 // TestTaskProcessor implements a dummy task processor useful for testing

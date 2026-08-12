@@ -4,8 +4,8 @@ import (
 	"context"
 	"hash/fnv"
 
-	"github.com/dapr/durabletask-go/api"
-	"github.com/dapr/durabletask-go/api/protos"
+	"github.com/mafilus/durabletask-go/api"
+	"github.com/mafilus/durabletask-go/api/protos"
 )
 
 // maxWarmInstancesPerStream bounds the number of warm (stateful-history) instance

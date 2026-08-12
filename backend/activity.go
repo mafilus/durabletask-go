@@ -8,9 +8,9 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/dapr/durabletask-go/api"
-	"github.com/dapr/durabletask-go/api/helpers"
-	"github.com/dapr/durabletask-go/api/protos"
+	"github.com/mafilus/durabletask-go/api"
+	"github.com/mafilus/durabletask-go/api/helpers"
+	"github.com/mafilus/durabletask-go/api/protos"
 )
 
 type activityProcessor struct {

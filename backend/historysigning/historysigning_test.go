@@ -36,7 +36,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
-	"github.com/dapr/durabletask-go/api/protos"
+	"github.com/mafilus/durabletask-go/api/protos"
 	"github.com/dapr/kit/crypto/spiffe/signer"
 	"github.com/dapr/kit/crypto/spiffe/trustanchors/fake"
 )

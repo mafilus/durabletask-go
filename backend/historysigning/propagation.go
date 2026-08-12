@@ -20,7 +20,7 @@ import (
 
 	"github.com/spiffe/go-spiffe/v2/svid/x509svid"
 
-	"github.com/dapr/durabletask-go/api/protos"
+	"github.com/mafilus/durabletask-go/api/protos"
 	"github.com/dapr/kit/crypto/spiffe/signer"
 )
 

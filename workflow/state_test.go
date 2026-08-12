@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/dapr/durabletask-go/api"
+	"github.com/mafilus/durabletask-go/api"
 	"github.com/stretchr/testify/require"
 )
 

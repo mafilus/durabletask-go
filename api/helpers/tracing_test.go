@@ -3,7 +3,7 @@ package helpers
 import (
 	"testing"
 
-	"github.com/dapr/durabletask-go/api/protos"
+	"github.com/mafilus/durabletask-go/api/protos"
 )
 
 func TestSpanContextFromTraceContextRejectsInvalidTraceFlags(t *testing.T) {

@@ -14,7 +14,7 @@ limitations under the License.
 package runtimestate
 
 import (
-	"github.com/dapr/durabletask-go/api/protos"
+	"github.com/mafilus/durabletask-go/api/protos"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 

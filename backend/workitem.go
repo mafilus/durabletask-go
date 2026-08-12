@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/dapr/durabletask-go/api"
-	"github.com/dapr/durabletask-go/api/protos"
+	"github.com/mafilus/durabletask-go/api"
+	"github.com/mafilus/durabletask-go/api/protos"
 )
 
 type WorkItem interface {

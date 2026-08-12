@@ -19,7 +19,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/dapr/durabletask-go/api/protos"
+	"github.com/mafilus/durabletask-go/api/protos"
 )
 
 // MarshalEvent deterministically marshals a HistoryEvent to bytes.

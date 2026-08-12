@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/dapr/durabletask-go/task"
+	"github.com/mafilus/durabletask-go/task"
 )
 
 // HelloCities is a workflow function that generates a "hello" message for several cities.

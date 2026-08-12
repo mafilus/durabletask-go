@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/dapr/durabletask-go/api"
-	"github.com/dapr/durabletask-go/api/helpers"
+	"github.com/mafilus/durabletask-go/api"
+	"github.com/mafilus/durabletask-go/api/helpers"
 )
 
 // TaskRegistry contains maps of names to corresponding workflow and activity functions.

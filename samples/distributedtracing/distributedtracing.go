@@ -13,9 +13,9 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/sdk/trace"
 
-	"github.com/dapr/durabletask-go/backend"
-	"github.com/dapr/durabletask-go/backend/sqlite"
-	"github.com/dapr/durabletask-go/task"
+	"github.com/mafilus/durabletask-go/backend"
+	"github.com/mafilus/durabletask-go/backend/sqlite"
+	"github.com/mafilus/durabletask-go/task"
 )
 
 var tracer = otel.Tracer("distributedtracing-example")

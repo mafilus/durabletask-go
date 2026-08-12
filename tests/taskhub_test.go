@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/dapr/durabletask-go/backend"
-	"github.com/dapr/durabletask-go/tests/mocks"
+	"github.com/mafilus/durabletask-go/backend"
+	"github.com/mafilus/durabletask-go/tests/mocks"
 	"github.com/stretchr/testify/assert"
 )
 

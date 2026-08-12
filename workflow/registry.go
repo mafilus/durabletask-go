@@ -1,8 +1,8 @@
 package workflow
 
 import (
-	"github.com/dapr/durabletask-go/api/helpers"
-	"github.com/dapr/durabletask-go/task"
+	"github.com/mafilus/durabletask-go/api/helpers"
+	"github.com/mafilus/durabletask-go/task"
 )
 
 // Registry contains maps of names to corresponding workflow and activity

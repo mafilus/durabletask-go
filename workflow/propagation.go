@@ -14,8 +14,8 @@ limitations under the License.
 package workflow
 
 import (
-	"github.com/dapr/durabletask-go/api"
-	"github.com/dapr/durabletask-go/task"
+	"github.com/mafilus/durabletask-go/api"
+	"github.com/mafilus/durabletask-go/task"
 )
 
 // PropagationOption configures how history is propagated to child

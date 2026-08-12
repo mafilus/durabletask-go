@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dapr/durabletask-go/api/protos"
-	"github.com/dapr/durabletask-go/backend"
+	"github.com/mafilus/durabletask-go/api/protos"
+	"github.com/mafilus/durabletask-go/backend"
 )
 
 func TestStressConcurrentActivityPollersDoNotDoubleAcquire(t *testing.T) {

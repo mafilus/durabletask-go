@@ -5,7 +5,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
-	"github.com/dapr/durabletask-go/task"
+	"github.com/mafilus/durabletask-go/task"
 )
 
 // DetachedWorkflowOptions is a functional option type for the

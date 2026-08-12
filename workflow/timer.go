@@ -1,6 +1,6 @@
 package workflow
 
-import "github.com/dapr/durabletask-go/task"
+import "github.com/mafilus/durabletask-go/task"
 
 type CreateTimerOption task.CreateTimerOption
 

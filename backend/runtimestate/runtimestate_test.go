@@ -9,8 +9,8 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/dapr/durabletask-go/api/protos"
-	"github.com/dapr/durabletask-go/backend/runtimestate/dedup"
+	"github.com/mafilus/durabletask-go/api/protos"
+	"github.com/mafilus/durabletask-go/backend/runtimestate/dedup"
 )
 
 func startedEvent() *protos.HistoryEvent {

@@ -8,9 +8,9 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/dapr/durabletask-go/backend"
-	"github.com/dapr/durabletask-go/backend/sqlite"
-	"github.com/dapr/durabletask-go/task"
+	"github.com/mafilus/durabletask-go/backend"
+	"github.com/mafilus/durabletask-go/backend/sqlite"
+	"github.com/mafilus/durabletask-go/task"
 )
 
 func main() {

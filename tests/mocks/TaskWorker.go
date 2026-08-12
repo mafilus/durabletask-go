@@ -5,7 +5,7 @@ package mocks
 import (
 	context "context"
 
-	backend "github.com/dapr/durabletask-go/backend"
+	backend "github.com/mafilus/durabletask-go/backend"
 
 	mock "github.com/stretchr/testify/mock"
 )

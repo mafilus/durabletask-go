@@ -1,6 +1,6 @@
 package workflow
 
-import "github.com/dapr/durabletask-go/task"
+import "github.com/mafilus/durabletask-go/task"
 
 // Task is an interface for asynchronous durable tasks. A task is conceptually
 // similar to a future.

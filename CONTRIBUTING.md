@@ -5,7 +5,7 @@
 This repository contains submodules. Be sure to clone it with the option to include submodules. Otherwise, you will not be able to generate the protobuf code.
 
 ```bash
-git clone --recurse-submodules https://github.com/dapr/durabletask-go 
+git clone --recurse-submodules https://github.com/mafilus/durabletask-go
 ```
 
 If you already cloned the repository without `--recurse-submodules`, you can initialize and update the submodules with:

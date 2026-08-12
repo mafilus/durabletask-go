@@ -20,7 +20,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/dapr/durabletask-go/api/protos"
+	"github.com/mafilus/durabletask-go/api/protos"
 	"github.com/dapr/kit/crypto/spiffe/signer"
 )
 

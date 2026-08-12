@@ -18,8 +18,8 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
-	"github.com/dapr/durabletask-go/backend"
-	"github.com/dapr/durabletask-go/backend/sqlite"
+	"github.com/mafilus/durabletask-go/backend"
+	"github.com/mafilus/durabletask-go/backend/sqlite"
 )
 
 var (

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/dapr/durabletask-go/backend"
+	"github.com/mafilus/durabletask-go/backend"
 	"github.com/pashagolub/pgxmock/v4"
 	"github.com/stretchr/testify/require"
 )

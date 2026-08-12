@@ -11,7 +11,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
-	"github.com/dapr/durabletask-go/api"
+	"github.com/mafilus/durabletask-go/api"
 )
 
 type (

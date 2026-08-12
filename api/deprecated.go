@@ -14,7 +14,7 @@ limitations under the License.
 package api
 
 import (
-	"github.com/dapr/durabletask-go/api/protos"
+	"github.com/mafilus/durabletask-go/api/protos"
 )
 
 // This file contains deprecated aliases for backward compatibility.

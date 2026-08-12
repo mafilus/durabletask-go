@@ -3,7 +3,7 @@ package postgres
 import (
 	"testing"
 
-	"github.com/dapr/durabletask-go/backend"
+	"github.com/mafilus/durabletask-go/backend"
 	"github.com/stretchr/testify/require"
 )
 

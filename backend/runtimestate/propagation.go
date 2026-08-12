@@ -14,8 +14,8 @@ limitations under the License.
 package runtimestate
 
 import (
-	"github.com/dapr/durabletask-go/api/protos"
-	"github.com/dapr/durabletask-go/backend/historysigning"
+	"github.com/mafilus/durabletask-go/api/protos"
+	"github.com/mafilus/durabletask-go/backend/historysigning"
 )
 
 // Only forward what the wf already received from its parent, no default. If the

@@ -17,12 +17,12 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 
-	"github.com/dapr/durabletask-go/api"
-	"github.com/dapr/durabletask-go/api/protos"
-	"github.com/dapr/durabletask-go/backend"
-	"github.com/dapr/durabletask-go/backend/sqlite"
-	"github.com/dapr/durabletask-go/task"
-	"github.com/dapr/durabletask-go/tests/utils"
+	"github.com/mafilus/durabletask-go/api"
+	"github.com/mafilus/durabletask-go/api/protos"
+	"github.com/mafilus/durabletask-go/backend"
+	"github.com/mafilus/durabletask-go/backend/sqlite"
+	"github.com/mafilus/durabletask-go/task"
+	"github.com/mafilus/durabletask-go/tests/utils"
 )
 
 var tracer = otel.Tracer("workflow-test")
@@ -1418,7 +1418,7 @@ func Test_PurgeWorkflow_Recursive(t *testing.T) {
 }
 
 func Test_RecreateCompletedWorkflow(t *testing.T) {
-	t.Skip("Not yet supported. Needs https://github.com/dapr/durabletask-go/issues/42")
+	t.Skip("Not yet supported. Needs https://github.com/mafilus/durabletask-go/issues/42")
 
 	// Registration
 	r := task.NewTaskRegistry()

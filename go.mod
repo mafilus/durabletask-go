@@ -1,4 +1,4 @@
-module github.com/dapr/durabletask-go
+module github.com/mafilus/durabletask-go
 
 go 1.26.0
 

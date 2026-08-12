@@ -13,7 +13,7 @@ limitations under the License.
 
 package dedup
 
-import "github.com/dapr/durabletask-go/api/protos"
+import "github.com/mafilus/durabletask-go/api/protos"
 
 // setKey packs (kind, id) into a single comparable so Set's underlying map
 // uses a trivially-hashable key rather than a struct.

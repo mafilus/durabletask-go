@@ -16,8 +16,8 @@ package client
 import (
 	"context"
 
-	"github.com/dapr/durabletask-go/api"
-	"github.com/dapr/durabletask-go/backend"
+	"github.com/mafilus/durabletask-go/api"
+	"github.com/mafilus/durabletask-go/backend"
 )
 
 // This file contains deprecated aliases for backward compatibility.

@@ -16,7 +16,7 @@ limitations under the License.
 // inside a workflow's runtime state.
 package dedup
 
-import "github.com/dapr/durabletask-go/api/protos"
+import "github.com/mafilus/durabletask-go/api/protos"
 
 // Kind names the family of correlator that identifies a task-resolution event.
 // Two events are duplicates only when they share both kind and id.
