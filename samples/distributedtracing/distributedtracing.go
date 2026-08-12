@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"net/http"
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/exporters/zipkin"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/sdk/trace"
 
@@ -22,7 +23,7 @@ var tracer = otel.Tracer("distributedtracing-example")
 
 func main() {
 	// Tracing can be configured independently of the workflow code.
-	tp, err := ConfigureZipkinTracing()
+	tp, err := ConfigureOTLPTracing(context.Background())
 	if err != nil {
 		log.Fatalf("Failed to create tracer: %v", err)
 	}
@@ -96,9 +97,13 @@ func Init(ctx context.Context, r *task.TaskRegistry) (backend.TaskHubClient, bac
 	return taskHubClient, taskHubWorker, nil
 }
 
-func ConfigureZipkinTracing() (*trace.TracerProvider, error) {
-	// Inspired by this sample: https://github.com/open-telemetry/opentelemetry-go/blob/main/example/zipkin/main.go
-	exp, err := zipkin.New("http://localhost:9411/api/v2/spans")
+// ConfigureOTLPTracing configures tracing for an OTLP/HTTP collector listening
+// on localhost:4318, such as an OpenTelemetry Collector.
+func ConfigureOTLPTracing(ctx context.Context) (*trace.TracerProvider, error) {
+	exp, err := otlptracehttp.New(ctx,
+		otlptracehttp.WithEndpoint("localhost:4318"),
+		otlptracehttp.WithInsecure(),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +126,7 @@ func ConfigureZipkinTracing() (*trace.TracerProvider, error) {
 }
 
 // DistributedTraceSampleWorkflow is a simple workflow that's intended to generate
-// distributed trace output to the configured exporter (e.g. zipkin).
+// distributed trace output to the configured OTLP exporter.
 func DistributedTraceSampleWorkflow(ctx *task.WorkflowContext) (any, error) {
 	if err := ctx.CallActivity(DoWorkActivity, task.WithActivityInput(1*time.Second)).Await(nil); err != nil {
 		return nil, err
@@ -171,9 +176,14 @@ func CallHttpEndpointActivity(ctx task.ActivityContext) (any, error) {
 
 	// ActivityContext.Context() returns a context instrumented with span information.
 	// The OTel HTTP client will use this to produce child spans accordingly.
-	_, err := otelhttp.Get(ctx.Context(), url)
+	req, err := http.NewRequestWithContext(ctx.Context(), http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
+	response, err := (&http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
 	return nil, nil
 }

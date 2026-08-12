@@ -215,22 +215,21 @@ Each sample linked above has a full implementation you can use as a reference.
 
 ## Distributed tracing support
 
-The Durable Task Framework for Go supports publishing distributed traces to any configured [Open Telemetry](https://opentelemetry.io/)-compatible exporter. Simply use [`otel.SetTracerProvider(tp)`](https://pkg.go.dev/go.opentelemetry.io/otel#SetTracerProvider) to register a global `TracerProvider` as part of your application startup and the task hub worker will automatically use it to emit OLTP trace spans.
+The Durable Task Framework for Go supports publishing distributed traces to any configured [OpenTelemetry](https://opentelemetry.io/)-compatible exporter. Simply use [`otel.SetTracerProvider(tp)`](https://pkg.go.dev/go.opentelemetry.io/otel#SetTracerProvider) to register a global `TracerProvider` as part of your application startup and the task hub worker will automatically use it to emit OTLP trace spans.
 
-The following example code shows how you can configure distributed trace collection with [Zipkin](https://zipkin.io/), a popular open source distributed tracing system. The example assumes Zipkin is running locally, as shown in the code.
+The following example configures distributed trace collection through OTLP/HTTP. It assumes an OpenTelemetry Collector is listening locally on port `4318`.
 
 ```go
-func ConfigureZipkinTracing() (*trace.TracerProvider, error) {
-	// Inspired by this sample: https://github.com/open-telemetry/opentelemetry-go/blob/main/example/zipkin/main.go
-	exp, err := zipkin.New("http://localhost:9411/api/v2/spans")
+func ConfigureOTLPTracing(ctx context.Context) (*trace.TracerProvider, error) {
+	exp, err := otlptracehttp.New(ctx,
+		otlptracehttp.WithEndpoint("localhost:4318"),
+		otlptracehttp.WithInsecure(),
+	)
 	if err != nil {
 		return nil, err
 	}
 
-	// NOTE: The simple span processor is not recommended for production.
-	//       Instead, the batch span processor should be used for production.
-	processor := trace.NewSimpleSpanProcessor(exp)
-	// processor := trace.NewBatchSpanProcessor(exp)
+	processor := trace.NewBatchSpanProcessor(exp)
 
 	tp := trace.NewTracerProvider(
 		trace.WithSpanProcessor(processor),
