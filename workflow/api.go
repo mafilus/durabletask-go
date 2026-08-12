@@ -97,7 +97,15 @@ func WorkflowMetadataIsRunning(o *WorkflowMetadata) bool {
 }
 
 func WorkflowMetadataIsComplete(o *WorkflowMetadata) bool {
-	return api.WorkflowMetadataIsComplete((*protos.WorkflowMetadata)(o))
+	if o == nil {
+		return false
+	}
+	switch o.RuntimeStatus {
+	case api.RUNTIME_STATUS_COMPLETED, api.RUNTIME_STATUS_FAILED, api.RUNTIME_STATUS_TERMINATED, api.RUNTIME_STATUS_CANCELED:
+		return true
+	default:
+		return false
+	}
 }
 
 func WithRerunInput(input any) RerunOptions {

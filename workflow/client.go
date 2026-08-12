@@ -53,7 +53,7 @@ func (c *Client) FetchWorkflowMetadata(ctx context.Context, id string, opts ...F
 		oops[i] = api.FetchWorkflowMetadataOptions(o)
 	}
 	meta, err := c.thgc.FetchWorkflowMetadata(ctx, api.InstanceID(id), oops...)
-	return (*WorkflowMetadata)(meta), err
+	return workflowMetadataFromProto(meta), err
 }
 
 // WaitForWorkflowStart waits for an workflow to start running and returns an
@@ -68,7 +68,7 @@ func (c *Client) WaitForWorkflowStart(ctx context.Context, id string, opts ...Fe
 		oops[i] = api.FetchWorkflowMetadataOptions(o)
 	}
 	meta, err := c.thgc.WaitForWorkflowStart(ctx, api.InstanceID(id), oops...)
-	return (*WorkflowMetadata)(meta), err
+	return workflowMetadataFromProto(meta), err
 }
 
 // WaitForWorkflowCompletion waits for an workflow to complete and returns an
@@ -83,7 +83,7 @@ func (c *Client) WaitForWorkflowCompletion(ctx context.Context, id string, opts 
 		oops[i] = api.FetchWorkflowMetadataOptions(o)
 	}
 	meta, err := c.thgc.WaitForWorkflowCompletion(ctx, api.InstanceID(id), oops...)
-	return (*WorkflowMetadata)(meta), err
+	return workflowMetadataFromProto(meta), err
 }
 
 // TerminateWorkflow terminates a running workflow by causing it to stop

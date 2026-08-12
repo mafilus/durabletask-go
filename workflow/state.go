@@ -3,6 +3,8 @@ package workflow
 import (
 	"github.com/dapr/durabletask-go/api"
 	"github.com/dapr/durabletask-go/api/protos"
+	"google.golang.org/protobuf/types/known/timestamppb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 const (
@@ -17,11 +19,29 @@ const (
 	StatusStalled        = api.RUNTIME_STATUS_STALLED
 )
 
-type WorkflowMetadata protos.WorkflowMetadata
+// WorkflowMetadata is the SDK representation of workflow metadata. It mirrors
+// the application fields returned by the service without embedding protobuf
+// runtime state, so values can safely implement fmt.Stringer.
+type WorkflowMetadata struct {
+	InstanceId       string
+	Name             string
+	RuntimeStatus    protos.OrchestrationStatus
+	CreatedAt        *timestamppb.Timestamp
+	LastUpdatedAt    *timestamppb.Timestamp
+	Input            *wrapperspb.StringValue
+	Output           *wrapperspb.StringValue
+	CustomStatus     *wrapperspb.StringValue
+	FailureDetails   *protos.TaskFailureDetails
+	CompletedAt      *timestamppb.Timestamp
+	ParentInstanceId string
+	Version          *wrapperspb.StringValue
+	ParentAppId      *wrapperspb.StringValue
+	StartedAt        *timestamppb.Timestamp
+}
 type ListInstanceIDsResponse protos.ListInstanceIDsResponse
 type GetInstanceHistoryResponse protos.GetInstanceHistoryResponse
 
-func (w *WorkflowMetadata) String() string {
+func (w WorkflowMetadata) String() string {
 	switch w.RuntimeStatus {
 	case api.RUNTIME_STATUS_RUNNING:
 		return "RUNNING"
@@ -43,5 +63,27 @@ func (w *WorkflowMetadata) String() string {
 		return "STALLED"
 	default:
 		return ""
+	}
+}
+
+func workflowMetadataFromProto(metadata *protos.WorkflowMetadata) *WorkflowMetadata {
+	if metadata == nil {
+		return nil
+	}
+	return &WorkflowMetadata{
+		InstanceId:       metadata.InstanceId,
+		Name:             metadata.Name,
+		RuntimeStatus:    metadata.RuntimeStatus,
+		CreatedAt:        metadata.CreatedAt,
+		LastUpdatedAt:    metadata.LastUpdatedAt,
+		Input:            metadata.Input,
+		Output:           metadata.Output,
+		CustomStatus:     metadata.CustomStatus,
+		FailureDetails:   metadata.FailureDetails,
+		CompletedAt:      metadata.CompletedAt,
+		ParentInstanceId: metadata.ParentInstanceId,
+		Version:          metadata.Version,
+		ParentAppId:      metadata.ParentAppId,
+		StartedAt:        metadata.StartedAt,
 	}
 }
