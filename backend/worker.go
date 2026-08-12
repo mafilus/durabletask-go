@@ -55,6 +55,9 @@ func NewTaskWorker[T WorkItem](p TaskProcessor[T], logger Logger, opts ...NewTas
 
 	var parallelLock chan struct{}
 	if options.MaxParallelWorkItems != nil {
+		if *options.MaxParallelWorkItems <= 0 {
+			panic("max parallelism must be greater than zero")
+		}
 		parallelLock = make(chan struct{}, *options.MaxParallelWorkItems)
 	}
 

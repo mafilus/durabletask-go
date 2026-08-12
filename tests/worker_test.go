@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -295,6 +296,16 @@ func Test_TaskWorker(t *testing.T) {
 		t.Fatalf("worker stop and drain not finished within timeout")
 	}
 
+}
+
+func Test_TaskWorkerRejectsNonPositiveMaxParallelism(t *testing.T) {
+	for _, maxParallelism := range []int32{0, -1} {
+		t.Run(fmt.Sprintf("max_parallelism_%d", maxParallelism), func(t *testing.T) {
+			require.PanicsWithValue(t, "max parallelism must be greater than zero", func() {
+				backend.NewTaskWorker[*backend.ActivityWorkItem](nil, logger, backend.WithMaxParallelism(maxParallelism))
+			})
+		})
+	}
 }
 
 func Test_StartAndStop(t *testing.T) {
