@@ -1207,7 +1207,15 @@ func (*sqliteBackend) Start(context.Context) error {
 }
 
 // Stop implements backend.Backend
-func (*sqliteBackend) Stop(context.Context) error {
+func (be *sqliteBackend) Stop(context.Context) error {
+	if be.db == nil {
+		return nil
+	}
+	if err := be.db.Close(); err != nil {
+		be.db = nil
+		return fmt.Errorf("failed to close the database: %w", err)
+	}
+	be.db = nil
 	return nil
 }
 

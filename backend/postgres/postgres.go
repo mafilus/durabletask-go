@@ -1282,7 +1282,11 @@ func (*postgresBackend) Start(context.Context) error {
 }
 
 // Stop implements backend.Backend
-func (*postgresBackend) Stop(context.Context) error {
+func (be *postgresBackend) Stop(context.Context) error {
+	if be.db != nil {
+		be.db.Close()
+		be.db = nil
+	}
 	return nil
 }
 

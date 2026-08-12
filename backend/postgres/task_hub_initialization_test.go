@@ -30,3 +30,17 @@ func TestCreateTaskHubReturnsSchemaErrorAndClosesPool(t *testing.T) {
 	require.Nil(t, be.db)
 	require.NoError(t, mockDB.ExpectationsWereMet())
 }
+
+func TestStopClosesPool(t *testing.T) {
+	mockDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+	t.Cleanup(mockDB.Close)
+	mockDB.ExpectClose()
+
+	be := &postgresBackend{db: mockDB}
+	require.NoError(t, be.Stop(context.Background()))
+	require.Nil(t, be.db)
+	require.NoError(t, mockDB.ExpectationsWereMet())
+
+	require.NoError(t, be.Stop(context.Background()))
+}

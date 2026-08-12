@@ -46,13 +46,7 @@ func (w *taskHubWorker) Start(ctx context.Context) error {
 }
 
 func (w *taskHubWorker) Shutdown(ctx context.Context) error {
-	w.logger.Info("backend stopping...")
-	if err := w.backend.Stop(ctx); err != nil {
-		return err
-	}
-
 	w.logger.Info("workers stopping and draining...")
-	defer w.logger.Info("finished stopping and draining workers!")
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -68,6 +62,12 @@ func (w *taskHubWorker) Shutdown(ctx context.Context) error {
 	}()
 
 	wg.Wait()
+	w.logger.Info("finished stopping and draining workers!")
+
+	w.logger.Info("backend stopping...")
+	if err := w.backend.Stop(ctx); err != nil {
+		return err
+	}
 
 	return nil
 }
