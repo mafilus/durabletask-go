@@ -65,6 +65,10 @@ func NewSqliteOptions(filePath string) *SqliteOptions {
 
 // NewSqliteBackend creates a new sqlite-based Backend object.
 func NewSqliteBackend(opts *SqliteOptions, logger backend.Logger) backend.Backend {
+	if opts == nil {
+		opts = NewSqliteOptions("")
+	}
+
 	hostname, err := os.Hostname()
 	if err != nil {
 		hostname = "unknown"
@@ -82,9 +86,6 @@ func NewSqliteBackend(opts *SqliteOptions, logger backend.Logger) backend.Backen
 		TasksBackend: local.NewTasksBackend(),
 	}
 
-	if opts == nil {
-		opts = NewSqliteOptions("")
-	}
 	if opts.FilePath == "" {
 		be.dsn = "file::memory:"
 	} else if !strings.HasPrefix(opts.FilePath, "file:") {
