@@ -16,6 +16,16 @@ The Durable Task Framework is a lightweight, embeddable engine for writing durab
 
 The project originated as a Go clone of the [.NET-based Durable Task Framework](https://github.com/Azure/durabletask). It also takes inspiration from the [Go Workflows](https://github.com/cschleiden/go-workflows) project and [Temporal](https://temporal.io/). This fork is designed to be embedded in Go-based processes and sidecar-style deployments; it does not follow the product roadmap or contribution processes of its upstream projects.
 
+## Security responsibility boundary
+
+Durabletask-go is a neutral workflow engine. Historical signatures, identity
+attestation, and integrity-policy enforcement are not responsibilities of this
+repository.
+
+An integrating runtime is responsible for deciding and enforcing any required
+identity, authorization, integrity, provenance, or audit policy around workflow
+execution and durable storage.
+
 ## Storage providers
 
 This project includes a [sqlite](https://sqlite.org/) storage provider for persisting app state to disk.
