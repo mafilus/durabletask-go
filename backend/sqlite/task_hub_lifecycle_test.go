@@ -22,6 +22,23 @@ func TestDeleteTaskHubClosesDatabase(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestDeleteTaskHubClosesDatabaseBeforeRemovingFile(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	mock.ExpectClose()
+
+	be := &sqliteBackend{
+		db:      db,
+		options: NewSqliteOptions("task-hub.sqlite"),
+		removeFile: func(string) error {
+			return mock.ExpectationsWereMet()
+		},
+	}
+	require.NoError(t, be.DeleteTaskHub(context.Background()))
+	require.Nil(t, be.db)
+}
+
 func TestDeleteTaskHubClosesDatabaseWhenFileRemovalFails(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

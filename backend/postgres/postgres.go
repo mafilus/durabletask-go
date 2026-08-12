@@ -44,6 +44,7 @@ type PostgresOptions struct {
 
 type postgresBackend struct {
 	db         postgresDB
+	openDB     func(context.Context, *pgxpool.Config) (postgresDB, error)
 	workerName string
 	logger     backend.Logger
 	options    *PostgresOptions
@@ -97,11 +98,16 @@ func NewPostgresBackend(opts *PostgresOptions, logger backend.Logger) backend.Ba
 
 	return &postgresBackend{
 		db:           nil,
+		openDB:       openPostgresDB,
 		workerName:   fmt.Sprintf("%s,%d,%s", hostname, pid, uuidStr),
 		options:      opts,
 		logger:       logger,
 		TasksBackend: local.NewTasksBackend(),
 	}
+}
+
+func openPostgresDB(ctx context.Context, config *pgxpool.Config) (postgresDB, error) {
+	return pgxpool.NewWithConfig(ctx, config)
 }
 
 func (be *postgresBackend) NextActivityWorkItem(ctx context.Context) (*backend.ActivityWorkItem, error) {
@@ -209,17 +215,22 @@ func (be *postgresBackend) WatchWorkflowRuntimeStatus(ctx context.Context, id ap
 }
 
 // CreateTaskHub creates the postgres database and applies the schema
-func (be *postgresBackend) CreateTaskHub(context.Context) error {
-	pool, err := pgxpool.NewWithConfig(context.Background(), be.options.PgOptions)
+func (be *postgresBackend) CreateTaskHub(ctx context.Context) error {
+	openDB := be.openDB
+	if openDB == nil {
+		openDB = openPostgresDB
+	}
+	db, err := openDB(ctx, be.options.PgOptions)
 	if err != nil {
 		be.logger.Error("CreateTaskHub", "failed to create a new postgres pool", err)
-		return err
+		return fmt.Errorf("failed to create a new postgres pool: %w", err)
 	}
-	be.db = pool
 	// Initialize database
-	if _, err := be.db.Exec(context.Background(), schema); err != nil {
-		panic(fmt.Errorf("failed to initialize the database: %w", err))
+	if _, err := db.Exec(ctx, schema); err != nil {
+		db.Close()
+		return fmt.Errorf("failed to initialize the database: %w", err)
 	}
+	be.db = db
 
 	return nil
 }

@@ -44,6 +44,7 @@ type SqliteOptions struct {
 type sqliteBackend struct {
 	dsn        string
 	db         *sql.DB
+	removeFile func(string) error
 	workerName string
 	logger     backend.Logger
 	options    *SqliteOptions
@@ -75,6 +76,7 @@ func NewSqliteBackend(opts *SqliteOptions, logger backend.Logger) backend.Backen
 	be := &sqliteBackend{
 		db:           nil,
 		workerName:   fmt.Sprintf("%s,%d,%s", hostname, pid, uuidStr),
+		removeFile:   os.Remove,
 		options:      opts,
 		logger:       logger,
 		TasksBackend: local.NewTasksBackend(),
@@ -101,12 +103,13 @@ func NewSqliteBackend(opts *SqliteOptions, logger backend.Logger) backend.Backen
 func (be *sqliteBackend) CreateTaskHub(context.Context) error {
 	db, err := sql.Open("sqlite", be.dsn)
 	if err != nil {
-		panic(fmt.Errorf("failed to open the database: %w", err))
+		return fmt.Errorf("failed to open the database: %w", err)
 	}
 
 	// Initialize database
 	if _, err := db.Exec(schema); err != nil {
-		panic(fmt.Errorf("failed to initialize the database: %w", err))
+		_ = db.Close()
+		return fmt.Errorf("failed to initialize the database: %w", err)
 	}
 
 	// TODO: This is to avoid SQLITE_BUSY errors when there are concurrent
@@ -133,7 +136,11 @@ func (be *sqliteBackend) DeleteTaskHub(ctx context.Context) error {
 		return nil
 	} else {
 		// File-system DB
-		err := os.Remove(be.options.FilePath)
+		removeFile := be.removeFile
+		if removeFile == nil {
+			removeFile = os.Remove
+		}
+		err := removeFile(be.options.FilePath)
 		if err == nil {
 			return nil
 		} else if os.IsNotExist(err) {
