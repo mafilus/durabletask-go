@@ -9,8 +9,11 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -26,8 +29,9 @@ var (
 	port       = flag.Int("port", 4001, "The server port")
 	host       = flag.String("host", "127.0.0.1", "The host to bind to")
 	dbFilePath = flag.String("db", "", "The path to the sqlite file to use (or create if not exists)")
-	ctx        = context.Background()
 )
+
+const grpcGracefulStopTimeout = 25 * time.Second
 
 type grpcServerConfig struct {
 	host              string
@@ -52,18 +56,68 @@ func main() {
 	}
 	grpcServer := grpc.NewServer(serverOptions...)
 	worker := createTaskHubWorker(grpcServer, *dbFilePath, backend.DefaultLogger())
-	if err := worker.Start(ctx); err != nil {
-		log.Fatalf("failed to start worker: %v", err)
-	}
 
 	lis, err := net.Listen("tcp", net.JoinHostPort(config.host, strconv.Itoa(config.port)))
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
+	if err := worker.Start(context.Background()); err != nil {
+		_ = lis.Close()
+		log.Fatalf("failed to start worker: %v", err)
+	}
 
 	fmt.Printf("server listening at %v\n", lis.Addr())
-	if err := grpcServer.Serve(lis); err != nil {
-		log.Fatalf("failed to serve: %v", err)
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- grpcServer.Serve(lis) }()
+
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(signals)
+
+	var serveFailure error
+	select {
+	case sig := <-signals:
+		log.Printf("received %s, shutting down", sig)
+		// Closing the listener stops new accepts before gRPC drains active RPCs.
+		_ = lis.Close()
+		stopGRPCServer(grpcServer, grpcGracefulStopTimeout)
+	case serveFailure = <-serveErr:
+		if serveFailure != nil {
+			log.Printf("gRPC server stopped: %v", serveFailure)
+		}
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := worker.Shutdown(shutdownCtx); err != nil {
+		log.Printf("failed to shut down worker: %v", err)
+	}
+	if serveFailure != nil {
+		log.Printf("server exited with an error: %v", serveFailure)
+	}
+}
+
+type grpcStoppable interface {
+	GracefulStop()
+	Stop()
+}
+
+// stopGRPCServer gives long-lived streaming RPCs time to finish, then forces
+// them closed so process shutdown always reaches backend worker cleanup.
+func stopGRPCServer(server grpcStoppable, timeout time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		server.GracefulStop()
+		close(done)
+	}()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		server.Stop()
+		<-done
 	}
 }
 

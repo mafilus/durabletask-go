@@ -17,3 +17,8 @@ func TestPostgresBackendStringRedactsPassword(t *testing.T) {
 	require.NotContains(t, connection, ":"+password+"@")
 	require.Equal(t, "postgresql://service-user@db.example.test:5432/durabletask", connection)
 }
+
+func TestNewPostgresOptionsUsesDocumentedPoolDefault(t *testing.T) {
+	options := NewPostgresOptions("db.example.test", 5432, "durabletask", "service-user", "password")
+	require.Equal(t, DefaultMaxConns, options.PgOptions.MaxConns)
+}

@@ -12,13 +12,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/mafilus/durabletask-go/api"
 	"github.com/mafilus/durabletask-go/api/helpers"
 	"github.com/mafilus/durabletask-go/api/protos"
 	"github.com/mafilus/durabletask-go/backend"
 	"github.com/mafilus/durabletask-go/backend/local"
 	"github.com/mafilus/durabletask-go/backend/runtimestate"
-	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -37,6 +37,10 @@ var schema string
 var emptyString string = ""
 
 var errNoWorkItems = errors.New("no work items were found")
+
+// DefaultMaxConns is the initial PostgreSQL pool size. Increase it to match
+// the expected worker concurrency and the database connection budget.
+const DefaultMaxConns int32 = 16
 
 type PostgresOptions struct {
 	PgOptions           *pgxpool.Config
@@ -75,7 +79,7 @@ func NewPostgresOptions(host string, port uint16, database string, user string, 
 	conf.ConnConfig.Config.ConnectTimeout = 2 * time.Minute
 	conf.MaxConnLifetime = 2 * time.Minute
 	conf.MaxConnIdleTime = 2 * time.Minute
-	conf.MaxConns = 1
+	conf.MaxConns = DefaultMaxConns
 
 	return &PostgresOptions{
 		PgOptions:           conf,

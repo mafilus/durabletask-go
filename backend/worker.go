@@ -2,8 +2,10 @@ package backend
 
 import (
 	"context"
+	"math/rand/v2"
 	"runtime"
 	"sync"
+	"time"
 )
 
 type TaskWorker[T WorkItem] interface {
@@ -26,10 +28,14 @@ type worker[T WorkItem] struct {
 	logger Logger
 
 	processor    TaskProcessor[T]
-	closeCh      chan struct{}
-	wg           sync.WaitGroup
-	workItems    chan T
 	parallelLock chan struct{}
+
+	mu       sync.Mutex
+	running  bool
+	cancel   context.CancelFunc
+	pollDone chan struct{}
+	pollWG   sync.WaitGroup
+	workWG   sync.WaitGroup
 }
 
 type NewTaskWorkerOptions func(*WorkerOptions)
@@ -41,6 +47,9 @@ type WorkerOptions struct {
 const (
 	minDefaultMaxParallelism int32 = 16
 	maxDefaultMaxParallelism int32 = 64
+
+	workerRetryInitialDelay = 100 * time.Millisecond
+	workerRetryMaxDelay     = 5 * time.Second
 )
 
 // DefaultMaxParallelism returns the default limit used by workflow and activity
@@ -83,9 +92,7 @@ func NewTaskWorker[T WorkItem](p TaskProcessor[T], logger Logger, opts ...NewTas
 	return &worker[T]{
 		processor:    p,
 		logger:       logger,
-		workItems:    make(chan T),
 		parallelLock: parallelLock,
-		closeCh:      make(chan struct{}),
 	}
 }
 
@@ -94,26 +101,26 @@ func (w *worker[T]) Name() string {
 }
 
 func (w *worker[T]) Start(ctx context.Context) {
-	w.wg.Add(2)
-
+	w.mu.Lock()
+	if w.running {
+		w.mu.Unlock()
+		return
+	}
 	ctx, cancel := context.WithCancel(ctx)
+	pollDone := make(chan struct{})
+	w.running = true
+	w.cancel = cancel
+	w.pollDone = pollDone
+	w.pollWG.Add(1)
+	w.mu.Unlock()
 
 	go func() {
-		defer w.wg.Done()
-		defer cancel()
-
-		select {
-		case <-w.closeCh:
-		case <-ctx.Done():
-		}
-	}()
-
-	go func() {
-		defer w.wg.Done()
+		defer w.pollWG.Done()
+		defer close(pollDone)
 		defer w.logger.Infof("%v: worker stopped", w.Name())
 
+		var retryAttempt int
 		for {
-
 			select {
 			case w.parallelLock <- struct{}{}:
 			case <-ctx.Done():
@@ -123,20 +130,24 @@ func (w *worker[T]) Start(ctx context.Context) {
 			wi, err := w.processor.NextWorkItem(ctx)
 			if err != nil {
 				<-w.parallelLock
-
 				if ctx.Err() != nil {
 					return
 				}
 
 				w.logger.Errorf("%v: failed to get next work item: %v", w.Name(), err)
+				if !waitForWorkerRetry(ctx, retryDelay(retryAttempt)) {
+					return
+				}
+				retryAttempt++
 				continue
 			}
 
-			w.wg.Add(1)
+			retryAttempt = 0
+			w.workWG.Add(1)
 			go func() {
 				defer func() {
 					<-w.parallelLock
-					w.wg.Done()
+					w.workWG.Done()
 				}()
 				w.processWorkItem(ctx, wi)
 			}()
@@ -145,8 +156,49 @@ func (w *worker[T]) Start(ctx context.Context) {
 }
 
 func (w *worker[T]) StopAndDrain() {
-	close(w.closeCh)
-	w.wg.Wait()
+	w.mu.Lock()
+	if !w.running {
+		w.mu.Unlock()
+		return
+	}
+	cancel := w.cancel
+	pollDone := w.pollDone
+	w.mu.Unlock()
+
+	cancel()
+	<-pollDone
+	w.workWG.Wait()
+
+	w.mu.Lock()
+	if w.pollDone == pollDone {
+		w.running = false
+		w.cancel = nil
+		w.pollDone = nil
+	}
+	w.mu.Unlock()
+}
+
+func retryDelay(attempt int) time.Duration {
+	delay := workerRetryInitialDelay
+	for i := 0; i < attempt && delay < workerRetryMaxDelay; i++ {
+		delay *= 2
+		if delay > workerRetryMaxDelay {
+			delay = workerRetryMaxDelay
+		}
+	}
+	// Keep retries from synchronizing when several workers lose the backend at once.
+	return delay/2 + time.Duration(rand.Float64()*float64(delay)/2)
+}
+
+func waitForWorkerRetry(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 func (w *worker[T]) processWorkItem(ctx context.Context, wi T) {

@@ -18,6 +18,8 @@ type taskHubWorker struct {
 	workflowWorker TaskWorker[*WorkflowWorkItem]
 	activityWorker TaskWorker[*ActivityWorkItem]
 	logger         Logger
+	mu             sync.Mutex
+	started        bool
 }
 
 func NewTaskHubWorker(be Backend, workflowWorker TaskWorker[*WorkflowWorkItem], activityWorker TaskWorker[*ActivityWorkItem], logger Logger) TaskHubWorker {
@@ -30,6 +32,12 @@ func NewTaskHubWorker(be Backend, workflowWorker TaskWorker[*WorkflowWorkItem], 
 }
 
 func (w *taskHubWorker) Start(ctx context.Context) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.started {
+		return nil
+	}
+
 	if err := w.backend.CreateTaskHub(ctx); err != nil && err != ErrTaskHubExists {
 		return err
 	}
@@ -42,10 +50,21 @@ func (w *taskHubWorker) Start(ctx context.Context) error {
 
 	w.workflowWorker.Start(ctx)
 	w.activityWorker.Start(ctx)
+	w.started = true
 	return nil
 }
 
 func (w *taskHubWorker) Shutdown(ctx context.Context) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.started {
+		return nil
+	}
+	// Workers are drained below even when stopping the backend fails. Allow a
+	// caller to retry the lifecycle instead of leaving the task hub wedged in a
+	// started state with no running workers.
+	defer func() { w.started = false }()
+
 	w.logger.Info("workers stopping and draining...")
 
 	var wg sync.WaitGroup

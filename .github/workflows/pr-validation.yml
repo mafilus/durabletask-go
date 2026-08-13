@@ -24,10 +24,6 @@ jobs:
   # This workflow contains a single job called "build"
   build:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        go-version: [ '1.23.x' ]
-
     # Boot up a local, clean postgres instance for the postgres tests
     services:
       # Label used to access the service container
@@ -57,10 +53,13 @@ jobs:
       - name: Setup Go environment
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ matrix.go-version }}
+          go-version-file: go.mod
 
       - name: Install dependencies
-        run: go get .
+        run: go mod download
+
+      - name: Verify dependencies
+        run: go mod verify
 
       - name: Install Protoc
         uses: arduino/setup-protoc@v2
@@ -75,7 +74,13 @@ jobs:
       - name: Generate grpc code
         run: protoc --go_out=. --go-grpc_out=. -I ./submodules/durabletask-protobuf/protos orchestrator_service.proto
 
-      - name: Run integration tests
+      - name: Run test suite
         env:
           POSTGRES_ENABLED: "true"
-        run: go test ./tests/... -coverpkg ./api,./task,./client,./backend/...,./api/helpers
+        run: go test ./... -coverpkg ./api,./task,./client,./backend/...,./api/helpers
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Scan for known vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...

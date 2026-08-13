@@ -5,7 +5,9 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"net/url"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -13,6 +15,39 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
+
+type blockingGRPCServer struct {
+	gracefulStarted chan struct{}
+	stopped         chan struct{}
+	once            sync.Once
+}
+
+func (s *blockingGRPCServer) GracefulStop() {
+	close(s.gracefulStarted)
+	<-s.stopped
+}
+
+func (s *blockingGRPCServer) Stop() { s.once.Do(func() { close(s.stopped) }) }
+
+func TestStopGRPCServerForcesLongLivedStreamsAfterTimeout(t *testing.T) {
+	server := &blockingGRPCServer{gracefulStarted: make(chan struct{}), stopped: make(chan struct{})}
+	done := make(chan struct{})
+	go func() {
+		stopGRPCServer(server, 10*time.Millisecond)
+		close(done)
+	}()
+
+	select {
+	case <-server.gracefulStarted:
+	case <-time.After(time.Second):
+		t.Fatal("GracefulStop was not called")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Stop was not forced after the graceful-stop timeout")
+	}
+}
 
 func TestGRPCServerSecurityPolicy(t *testing.T) {
 	t.Run("plaintext loopback is allowed", func(t *testing.T) {
