@@ -12,6 +12,11 @@ type TaskWorker[T WorkItem] interface {
 	// Start starts background polling for the activity work items.
 	Start(context.Context)
 
+	// DrainCompletion returns a channel that closes once a pending drain has
+	// actually completed. It remains useful when StopAndDrain returns because
+	// its context expired.
+	DrainCompletion() <-chan struct{}
+
 	// StopAndDrain stops the worker and waits for outstanding work items until
 	// the context expires.
 	StopAndDrain(context.Context) error
@@ -189,6 +194,20 @@ func (w *worker[T]) StopAndDrain(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// DrainCompletion returns a channel that closes when the current drain has
+// completed. If the worker is already stopped, the returned channel is closed.
+func (w *worker[T]) DrainCompletion() <-chan struct{} {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.drainDone != nil {
+		return w.drainDone
+	}
+
+	done := make(chan struct{})
+	close(done)
+	return done
 }
 
 func retryDelay(attempt int) time.Duration {

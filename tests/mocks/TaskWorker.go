@@ -28,6 +28,13 @@ func (_m *TaskWorker[T]) Start(_a0 context.Context) {
 	_m.Called(_a0)
 }
 
+// DrainCompletion provides a mock function with given fields: none.
+func (_m *TaskWorker[T]) DrainCompletion() <-chan struct{} {
+	completion := make(chan struct{})
+	close(completion)
+	return completion
+}
+
 // TaskWorker_Start_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Start'
 type TaskWorker_Start_Call[T backend.WorkItem] struct {
 	*mock.Call

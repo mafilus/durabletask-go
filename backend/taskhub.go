@@ -74,6 +74,8 @@ func (w *taskHubWorker) Shutdown(ctx context.Context) error {
 
 	w.logger.Info("workers stopping and draining...")
 
+	workflowCompletion := w.workflowWorker.DrainCompletion()
+	activityCompletion := w.activityWorker.DrainCompletion()
 	workflowDrained := make(chan error, 1)
 	activityDrained := make(chan error, 1)
 	go func() { workflowDrained <- w.workflowWorker.StopAndDrain(ctx) }()
@@ -84,18 +86,18 @@ func (w *taskHubWorker) Shutdown(ctx context.Context) error {
 			workflowDrained = nil
 			remaining--
 			if err != nil {
-				go w.finishShutdownAfterDrain(workflowDrained, activityDrained)
+				go w.finishShutdownAfterDrain(workflowDrained, activityDrained, workflowCompletion, activityCompletion)
 				return err
 			}
 		case err := <-activityDrained:
 			activityDrained = nil
 			remaining--
 			if err != nil {
-				go w.finishShutdownAfterDrain(workflowDrained, activityDrained)
+				go w.finishShutdownAfterDrain(workflowDrained, activityDrained, workflowCompletion, activityCompletion)
 				return err
 			}
 		case <-ctx.Done():
-			go w.finishShutdownAfterDrain(workflowDrained, activityDrained)
+			go w.finishShutdownAfterDrain(workflowDrained, activityDrained, workflowCompletion, activityCompletion)
 			return ctx.Err()
 		}
 	}
@@ -114,12 +116,18 @@ func (w *taskHubWorker) Shutdown(ctx context.Context) error {
 
 // finishShutdownAfterDrain completes an interrupted shutdown without allowing
 // a new Start to race workers that are still draining.
-func (w *taskHubWorker) finishShutdownAfterDrain(workflowDrained, activityDrained <-chan error) {
+func (w *taskHubWorker) finishShutdownAfterDrain(workflowDrained, activityDrained <-chan error, workflowCompletion, activityCompletion <-chan struct{}) {
 	if workflowDrained != nil {
 		<-workflowDrained
 	}
 	if activityDrained != nil {
 		<-activityDrained
+	}
+	if workflowCompletion != nil {
+		<-workflowCompletion
+	}
+	if activityCompletion != nil {
+		<-activityCompletion
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), taskHubCleanupTimeout)
