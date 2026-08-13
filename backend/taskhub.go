@@ -74,18 +74,28 @@ func (w *taskHubWorker) Shutdown(ctx context.Context) error {
 
 	w.logger.Info("workers stopping and draining...")
 
-	drained := make(chan error, 2)
-	go func() { drained <- w.workflowWorker.StopAndDrain(ctx) }()
-	go func() { drained <- w.activityWorker.StopAndDrain(ctx) }()
-	for range 2 {
+	workflowDrained := make(chan error, 1)
+	activityDrained := make(chan error, 1)
+	go func() { workflowDrained <- w.workflowWorker.StopAndDrain(ctx) }()
+	go func() { activityDrained <- w.activityWorker.StopAndDrain(ctx) }()
+	for remaining := 2; remaining > 0; {
 		select {
-		case err := <-drained:
+		case err := <-workflowDrained:
+			workflowDrained = nil
+			remaining--
 			if err != nil {
-				go w.finishShutdownAfterDrain()
+				go w.finishShutdownAfterDrain(workflowDrained, activityDrained)
+				return err
+			}
+		case err := <-activityDrained:
+			activityDrained = nil
+			remaining--
+			if err != nil {
+				go w.finishShutdownAfterDrain(workflowDrained, activityDrained)
 				return err
 			}
 		case <-ctx.Done():
-			go w.finishShutdownAfterDrain()
+			go w.finishShutdownAfterDrain(workflowDrained, activityDrained)
 			return ctx.Err()
 		}
 	}
@@ -104,9 +114,13 @@ func (w *taskHubWorker) Shutdown(ctx context.Context) error {
 
 // finishShutdownAfterDrain completes an interrupted shutdown without allowing
 // a new Start to race workers that are still draining.
-func (w *taskHubWorker) finishShutdownAfterDrain() {
-	_ = w.workflowWorker.StopAndDrain(context.Background())
-	_ = w.activityWorker.StopAndDrain(context.Background())
+func (w *taskHubWorker) finishShutdownAfterDrain(workflowDrained, activityDrained <-chan error) {
+	if workflowDrained != nil {
+		<-workflowDrained
+	}
+	if activityDrained != nil {
+		<-activityDrained
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), taskHubCleanupTimeout)
 	defer cancel()

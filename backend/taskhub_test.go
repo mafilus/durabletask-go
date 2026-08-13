@@ -56,6 +56,29 @@ func (w *deadlineWorker[T]) StopAndDrain(ctx context.Context) error {
 	}
 }
 
+type nonReentrantWorker[T WorkItem] struct {
+	calls   atomic.Int32
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (*nonReentrantWorker[T]) Start(context.Context) {}
+func (w *nonReentrantWorker[T]) StopAndDrain(context.Context) error {
+	if w.calls.Add(1) != 1 {
+		return errors.New("concurrent StopAndDrain invocation")
+	}
+	close(w.entered)
+	<-w.release
+	return nil
+}
+
+type failingDrainWorker[T WorkItem] struct{}
+
+func (*failingDrainWorker[T]) Start(context.Context) {}
+func (*failingDrainWorker[T]) StopAndDrain(context.Context) error {
+	return errors.New("drain failed")
+}
+
 func (w *lifecycleWorker[T]) Start(context.Context) { w.starts.Add(1) }
 func (w *lifecycleWorker[T]) StopAndDrain(context.Context) error {
 	w.stops.Add(1)
@@ -156,4 +179,31 @@ func TestTaskHubWorkerRefusesStartUntilTimedOutDrainCompletes(t *testing.T) {
 		return taskHub.Start(context.Background()) == nil
 	}, time.Second, 10*time.Millisecond)
 	require.Equal(t, int32(1), be.starts.Load())
+}
+
+func TestTaskHubWorkerDoesNotRepeatDrainAfterWorkerError(t *testing.T) {
+	release := make(chan struct{})
+	workflowWorker := &nonReentrantWorker[*WorkflowWorkItem]{entered: make(chan struct{}), release: release}
+	taskHub := &taskHubWorker{
+		backend:        &lifecycleBackend{},
+		workflowWorker: workflowWorker,
+		activityWorker: &failingDrainWorker[*ActivityWorkItem]{},
+		logger:         DefaultLogger(),
+		started:        true,
+	}
+
+	require.Error(t, taskHub.Shutdown(context.Background()))
+	select {
+	case <-workflowWorker.entered:
+	case <-time.After(time.Second):
+		t.Fatal("workflow drain did not start")
+	}
+	require.ErrorIs(t, taskHub.Start(context.Background()), ErrTaskHubStopping)
+	require.Equal(t, int32(1), workflowWorker.calls.Load())
+
+	close(release)
+	require.Eventually(t, func() bool {
+		return taskHub.Start(context.Background()) == nil
+	}, time.Second, 10*time.Millisecond)
+	require.Equal(t, int32(1), workflowWorker.calls.Load())
 }
