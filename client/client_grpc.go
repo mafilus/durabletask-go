@@ -311,35 +311,6 @@ func (c *TaskHubGrpcClient) PurgeWorkflowState(ctx context.Context, id api.Insta
 	return nil
 }
 
-// RerunWorkflowFromEvent reruns a workflow from a specific event ID of some
-// source instance ID. If not given, a random new instance ID will be
-// generated and returned. Can optionally give a new input to the target
-// event ID to rerun from.
-func (c *TaskHubGrpcClient) RerunWorkflowFromEvent(ctx context.Context, id api.InstanceID, eventID uint32, opts ...api.RerunOptions) (api.InstanceID, error) {
-	req := &protos.RerunWorkflowFromEventRequest{
-		SourceInstanceID: string(id),
-		EventID:          eventID,
-	}
-	for _, configure := range opts {
-		if err := configure(req); err != nil {
-			return "", fmt.Errorf("failed to configure rerun request: %w", err)
-		}
-	}
-	if err := api.ValidateTaskRouter(req.GetRouter()); err != nil {
-		return "", err
-	}
-
-	resp, err := c.client.RerunWorkflowFromEvent(ctx, req)
-	if err != nil {
-		if ctx.Err() != nil {
-			return "", ctx.Err()
-		}
-		return "", err
-	}
-
-	return api.InstanceID(resp.GetNewInstanceID()), nil
-}
-
 func (c *TaskHubGrpcClient) ListInstanceIDs(ctx context.Context, opts ...api.ListInstanceIDsOptions) (*backend.ListInstanceIDsResponse, error) {
 	req := protos.ListInstanceIDsRequest{
 		PageSize: ptr.Of(uint32(1024)),

@@ -587,24 +587,6 @@ func (g *grpcExecutor) StartInstance(ctx context.Context, req *protos.CreateInst
 	return &protos.CreateInstanceResponse{InstanceId: instanceID}, nil
 }
 
-// RerunWorkflowFromEvent reruns a workflow from a specific event ID of some
-// source instance ID. If not given, a random new instance ID will be
-// generated and returned. Can optionally give a new input to the target
-// event ID to rerun from.
-func (g *grpcExecutor) RerunWorkflowFromEvent(ctx context.Context, req *protos.RerunWorkflowFromEventRequest) (*protos.RerunWorkflowFromEventResponse, error) {
-	newInstanceID, err := g.backend.RerunWorkflowFromEvent(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = g.WaitForInstanceStart(ctx, &protos.GetInstanceRequest{InstanceId: newInstanceID.String(), Router: req.GetRouter()})
-	if err != nil {
-		return nil, err
-	}
-
-	return &protos.RerunWorkflowFromEventResponse{NewInstanceID: newInstanceID.String()}, nil
-}
-
 func (g *grpcExecutor) ListInstanceIDs(ctx context.Context, req *protos.ListInstanceIDsRequest) (*protos.ListInstanceIDsResponse, error) {
 	return g.backend.ListInstanceIDs(ctx, req)
 }

@@ -4,8 +4,6 @@ import (
 	"time"
 
 	"github.com/mafilus/durabletask-go/api"
-	"github.com/mafilus/durabletask-go/api/protos"
-	"github.com/mafilus/durabletask-go/internal/ptr"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -16,7 +14,6 @@ type TerminateOptions api.TerminateOptions
 type PurgeOptions api.PurgeOptions
 type SuspendOptions api.SuspendOptions
 type ResumeOptions api.ResumeOptions
-type RerunOptions api.RerunOptions
 type ListInstanceIDsOptions api.ListInstanceIDsOptions
 type GetInstanceHistoryOptions api.GetInstanceHistoryOptions
 
@@ -108,21 +105,6 @@ func WorkflowMetadataIsComplete(o *WorkflowMetadata) bool {
 	}
 }
 
-func WithRerunInput(input any) RerunOptions {
-	return RerunOptions(api.WithRerunInput(input))
-}
-
-func WithRerunNewInstanceID(id string) RerunOptions {
-	return RerunOptions(api.WithRerunNewInstanceID(api.InstanceID(id)))
-}
-
-func WithRerunNewChildInstanceID(id string) RerunOptions {
-	return RerunOptions(func(o *protos.RerunWorkflowFromEventRequest) error {
-		o.NewChildWorkflowInstanceID = ptr.Of(id)
-		return nil
-	})
-}
-
 func WithListInstanceIDsPageSize(pageSize uint32) ListInstanceIDsOptions {
 	return ListInstanceIDsOptions(api.WithListInstanceIDsPageSize(pageSize))
 }
@@ -172,10 +154,4 @@ func WithResumeAppID(appID string) ResumeOptions {
 // the target app, which honours the caller's recursive flag.
 func WithPurgeAppID(appID string) PurgeOptions {
 	return PurgeOptions(api.WithPurgeAppID(appID))
-}
-
-// WithRerunAppID targets the rerun at the workflow instance owned by the app
-// with the given app ID rather than the local app.
-func WithRerunAppID(appID string) RerunOptions {
-	return RerunOptions(api.WithRerunAppID(appID))
 }

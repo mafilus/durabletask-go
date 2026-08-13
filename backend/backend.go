@@ -33,7 +33,6 @@ type (
 	DurableTimer                  = protos.DurableTimer
 	WorkflowRuntimeState          = protos.WorkflowRuntimeState
 	WorkflowRuntimeStateMessage   = protos.WorkflowRuntimeStateMessage
-	RerunWorkflowFromEventRequest = protos.RerunWorkflowFromEventRequest
 	ListInstanceIDsRequest        = protos.ListInstanceIDsRequest
 	ListInstanceIDsResponse       = protos.ListInstanceIDsResponse
 	GetInstanceHistoryRequest     = protos.GetInstanceHistoryRequest
@@ -61,12 +60,6 @@ type Backend interface {
 	// CreateWorkflowInstance creates a new workflow instance with a request that
 	// wraps an ExecutionStarted history event.
 	CreateWorkflowInstance(context.Context, *CreateWorkflowInstanceRequest) error
-
-	// RerunWorkflowFromEvent reruns a workflow from a specific event ID of some
-	// source instance ID. If not given, a random new instance ID will be
-	// generated and returned. Can optionally give a new input to the target
-	// event ID to rerun from.
-	RerunWorkflowFromEvent(ctx context.Context, req *protos.RerunWorkflowFromEventRequest) (api.InstanceID, error)
 
 	// AddNewEvent adds a new workflow event to the specified workflow instance.
 	AddNewWorkflowEvent(context.Context, api.InstanceID, *HistoryEvent) error

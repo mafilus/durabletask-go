@@ -56,8 +56,6 @@ type SuspendOptions func(*protos.SuspendRequest) error
 // ResumeOptions is a set of options for resuming a workflow.
 type ResumeOptions func(*protos.ResumeRequest) error
 
-type RerunOptions func(*protos.RerunWorkflowFromEventRequest) error
-
 type ListInstanceIDsOptions func(*protos.ListInstanceIDsRequest) error
 
 type GetInstanceHistoryOptions func(*protos.GetInstanceHistoryRequest) error
@@ -198,25 +196,6 @@ func WorkflowMetadataIsComplete(o *protos.WorkflowMetadata) bool {
 		o.GetRuntimeStatus() == protos.OrchestrationStatus_ORCHESTRATION_STATUS_CANCELED
 }
 
-func WithRerunInput(input any) RerunOptions {
-	return func(req *protos.RerunWorkflowFromEventRequest) error {
-		req.OverwriteInput = true
-
-		if input == nil {
-			return nil
-		}
-
-		bytes, err := marshalData(input)
-		if err != nil {
-			return err
-		}
-
-		req.Input = wrapperspb.String(string(bytes))
-
-		return nil
-	}
-}
-
 // protoMarshaler uses default protojson options so JSON output uses camelCase
 // field names (the protojson default).
 var protoMarshaler = protojson.MarshalOptions{}
@@ -232,13 +211,6 @@ func marshalData(v any) ([]byte, error) {
 		return protoMarshaler.Marshal(msg)
 	}
 	return json.Marshal(v)
-}
-
-func WithRerunNewInstanceID(id InstanceID) RerunOptions {
-	return func(req *protos.RerunWorkflowFromEventRequest) error {
-		req.NewInstanceID = ptr.Of(id.String())
-		return nil
-	}
 }
 
 func WithListInstanceIDsPageSize(pageSize uint32) ListInstanceIDsOptions {
@@ -334,15 +306,6 @@ func WithResumeAppID(appID string) ResumeOptions {
 // the target app, which honours the caller's recursive flag.
 func WithPurgeAppID(appID string) PurgeOptions {
 	return func(req *protos.PurgeInstancesRequest) error {
-		req.Router = routerWithTargetAppID(req.GetRouter(), appID)
-		return nil
-	}
-}
-
-// WithRerunAppID targets the rerun at the workflow instance owned by the app
-// with the given app ID rather than the local app.
-func WithRerunAppID(appID string) RerunOptions {
-	return func(req *protos.RerunWorkflowFromEventRequest) error {
 		req.Router = routerWithTargetAppID(req.GetRouter(), appID)
 		return nil
 	}

@@ -77,11 +77,6 @@ func TestWithAppIDOptions_SetTargetOnRouter(t *testing.T) {
 		assert.Equal(t, "app2", req.GetRouter().GetTargetAppID())
 	})
 
-	t.Run("rerun", func(t *testing.T) {
-		req := new(protos.RerunWorkflowFromEventRequest)
-		require.NoError(t, WithRerunAppID("app2")(req))
-		assert.Equal(t, "app2", req.GetRouter().GetTargetAppID())
-	})
 }
 
 func TestValidateTaskRouter(t *testing.T) {

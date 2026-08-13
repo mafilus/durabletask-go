@@ -10,11 +10,24 @@
 >
 > Its primary goal is to freeze and stabilize API and runtime behavior for
 > production use. Changes favor compatibility, correctness, and operational
-> safety over upstream feature parity.
+> safety within this fork over upstream feature parity.
 
 The Durable Task Framework is a lightweight, embeddable engine for writing durable, fault-tolerant business logic (*orchestrations*) as ordinary code. The engine itself is written in Go and intended to be embedded into other Go-based processes. It exposes a gRPC endpoint to support writing durable flows in any language. There are currently SDKs that consume this gRPC endpoint for [.NET](https://github.com/microsoft/durabletask-dotnet) and [Java](https://github.com/microsoft/durabletask-java), with more to come. It's also possible to write orchestrations directly in Go and run them in the local process.
 
 The project originated as a Go clone of the [.NET-based Durable Task Framework](https://github.com/Azure/durabletask). It also takes inspiration from the [Go Workflows](https://github.com/cschleiden/go-workflows) project and [Temporal](https://temporal.io/). This fork is designed to be embedded in Go-based processes and sidecar-style deployments; it does not follow the product roadmap or contribution processes of its upstream projects.
+
+## Compatibility posture
+
+The public contract of this fork is defined by its own Go module and release
+tags. Compatibility with Dapr's workflow Actors backend, its protobuf feature
+surface, or its persisted workflow histories is not a goal of this project.
+
+Version `v1.0.0` removes `RerunWorkflowFromEvent` from the Go and gRPC APIs.
+The operation was never implemented by the bundled SQLite or PostgreSQL
+backends and its complete implementation is specific to Dapr Actors. A generic
+workflow engine must start a new workflow instance when an application wants a
+new execution. See [the v1 migration note](docs/releases/v1.0.0.md) before
+upgrading.
 
 ## Security responsibility boundary
 

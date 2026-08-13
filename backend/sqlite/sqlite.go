@@ -12,15 +12,13 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/google/uuid"
 	"github.com/mafilus/durabletask-go/api"
 	"github.com/mafilus/durabletask-go/api/helpers"
 	"github.com/mafilus/durabletask-go/api/protos"
 	"github.com/mafilus/durabletask-go/backend"
 	"github.com/mafilus/durabletask-go/backend/local"
 	"github.com/mafilus/durabletask-go/backend/runtimestate"
-	"github.com/google/uuid"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
@@ -1226,10 +1224,6 @@ func (be *sqliteBackend) ensureDB() error {
 
 func (be *sqliteBackend) String() string {
 	return fmt.Sprintf("sqlite::%s", be.options.FilePath)
-}
-
-func (be *sqliteBackend) RerunWorkflowFromEvent(ctx context.Context, req *backend.RerunWorkflowFromEventRequest) (api.InstanceID, error) {
-	return "", status.Error(codes.Unimplemented, "not implemented")
 }
 
 func (be *sqliteBackend) GetInstanceHistory(ctx context.Context, wi *backend.GetInstanceHistoryRequest) (*backend.GetInstanceHistoryResponse, error) {

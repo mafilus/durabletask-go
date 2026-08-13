@@ -19,8 +19,6 @@ import (
 	"github.com/mafilus/durabletask-go/backend"
 	"github.com/mafilus/durabletask-go/backend/local"
 	"github.com/mafilus/durabletask-go/backend/runtimestate"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
@@ -1307,8 +1305,4 @@ func (be *postgresBackend) String() string {
 		Host:   net.JoinHostPort(connConfig.Host, fmt.Sprint(connConfig.Port)),
 		Path:   connConfig.Database,
 	}).String()
-}
-
-func (be *postgresBackend) RerunWorkflowFromEvent(ctx context.Context, req *backend.RerunWorkflowFromEventRequest) (api.InstanceID, error) {
-	return "", status.Error(codes.Unimplemented, "not implemented")
 }

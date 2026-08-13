@@ -140,19 +140,6 @@ func (c *Client) PurgeWorkflowState(ctx context.Context, id string, opts ...Purg
 	return c.thgc.PurgeWorkflowState(ctx, api.InstanceID(id), oops...)
 }
 
-// RerunWorkflowFromEvent reruns a workflow from a specific event ID of some
-// source instance ID. If not given, a random new instance ID will be generated
-// and returned. Can optionally give a new input to the target event ID to
-// rerun from.
-func (c *Client) RerunWorkflowFromEvent(ctx context.Context, id string, eventID uint32, opts ...RerunOptions) (string, error) {
-	oops := make([]api.RerunOptions, len(opts))
-	for i, o := range opts {
-		oops[i] = api.RerunOptions(o)
-	}
-	newID, err := c.thgc.RerunWorkflowFromEvent(ctx, api.InstanceID(id), eventID, oops...)
-	return string(newID), err
-}
-
 func (c *Client) ListInstanceIDs(ctx context.Context, opts ...ListInstanceIDsOptions) (*ListInstanceIDsResponse, error) {
 	oops := make([]api.ListInstanceIDsOptions, len(opts))
 	for i, o := range opts {

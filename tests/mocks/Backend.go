@@ -1003,63 +1003,6 @@ func (_c *Backend_PurgeWorkflowState_Call) RunAndReturn(run func(context.Context
 	return _c
 }
 
-// RerunWorkflowFromEvent provides a mock function with given fields: ctx, req
-func (_m *Backend) RerunWorkflowFromEvent(ctx context.Context, req *protos.RerunWorkflowFromEventRequest) (api.InstanceID, error) {
-	ret := _m.Called(ctx, req)
-
-	if len(ret) == 0 {
-		panic("no return value specified for RerunWorkflowFromEvent")
-	}
-
-	var r0 api.InstanceID
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, *protos.RerunWorkflowFromEventRequest) (api.InstanceID, error)); ok {
-		return rf(ctx, req)
-	}
-	if rf, ok := ret.Get(0).(func(context.Context, *protos.RerunWorkflowFromEventRequest) api.InstanceID); ok {
-		r0 = rf(ctx, req)
-	} else {
-		r0 = ret.Get(0).(api.InstanceID)
-	}
-
-	if rf, ok := ret.Get(1).(func(context.Context, *protos.RerunWorkflowFromEventRequest) error); ok {
-		r1 = rf(ctx, req)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// Backend_RerunWorkflowFromEvent_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RerunWorkflowFromEvent'
-type Backend_RerunWorkflowFromEvent_Call struct {
-	*mock.Call
-}
-
-// RerunWorkflowFromEvent is a helper method to define mock.On call
-//   - ctx context.Context
-//   - req *protos.RerunWorkflowFromEventRequest
-func (_e *Backend_Expecter) RerunWorkflowFromEvent(ctx interface{}, req interface{}) *Backend_RerunWorkflowFromEvent_Call {
-	return &Backend_RerunWorkflowFromEvent_Call{Call: _e.mock.On("RerunWorkflowFromEvent", ctx, req)}
-}
-
-func (_c *Backend_RerunWorkflowFromEvent_Call) Run(run func(ctx context.Context, req *protos.RerunWorkflowFromEventRequest)) *Backend_RerunWorkflowFromEvent_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(*protos.RerunWorkflowFromEventRequest))
-	})
-	return _c
-}
-
-func (_c *Backend_RerunWorkflowFromEvent_Call) Return(_a0 api.InstanceID, _a1 error) *Backend_RerunWorkflowFromEvent_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *Backend_RerunWorkflowFromEvent_Call) RunAndReturn(run func(context.Context, *protos.RerunWorkflowFromEventRequest) (api.InstanceID, error)) *Backend_RerunWorkflowFromEvent_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
 // Start provides a mock function with given fields: _a0
 func (_m *Backend) Start(_a0 context.Context) error {
 	ret := _m.Called(_a0)
