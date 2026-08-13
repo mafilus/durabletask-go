@@ -130,6 +130,7 @@ func NewGrpcExecutor(be Backend, logger Logger, opts ...grpcExecutorOptions) (ex
 // ExecuteWorkflow implements Executor
 func (executor *grpcExecutor) ExecuteWorkflow(ctx context.Context, iid api.InstanceID, oldEvents []*protos.HistoryEvent, newEvents []*protos.HistoryEvent, opts ExecuteOptions) (*protos.WorkflowResponse, error) {
 	executor.pendingWorkflows.Store(iid, &pendingWorkflow{instanceID: iid})
+	defer executor.pendingWorkflows.Delete(iid)
 
 	req := &protos.WorkflowRequest{
 		InstanceId:        string(iid),
@@ -162,8 +163,6 @@ func (executor *grpcExecutor) ExecuteWorkflow(ctx context.Context, iid api.Insta
 
 	resp, err := wait(ctx)
 
-	// this workflow is either completed or cancelled, but its no longer pending, delete it
-	executor.pendingWorkflows.Delete(iid)
 	if err != nil {
 		if errors.Is(err, api.ErrTaskCancelled) {
 			return nil, errors.New("operation aborted")
@@ -179,6 +178,7 @@ func (executor *grpcExecutor) ExecuteWorkflow(ctx context.Context, iid api.Insta
 func (executor *grpcExecutor) ExecuteActivity(ctx context.Context, iid api.InstanceID, e *protos.HistoryEvent, opts ExecuteOptions) (*protos.HistoryEvent, error) {
 	key := GetActivityExecutionKey(string(iid), e.EventId)
 	executor.pendingActivities.Store(key, &pendingActivity{instanceID: iid, taskID: e.EventId})
+	defer executor.pendingActivities.Delete(key)
 
 	task := e.GetTaskScheduled()
 
@@ -214,8 +214,6 @@ func (executor *grpcExecutor) ExecuteActivity(ctx context.Context, iid api.Insta
 
 	resp, err := wait(ctx)
 
-	// this activity is either completed or cancelled, but its no longer pending, delete it
-	executor.pendingActivities.Delete(key)
 	if err != nil {
 		if errors.Is(err, api.ErrTaskCancelled) {
 			return nil, errors.New("operation aborted")
@@ -374,7 +372,7 @@ func (g *grpcExecutor) GetWorkItems(req *protos.GetWorkItemsRequest, stream prot
 			}
 		case wi, ok := <-g.workItemQueue:
 			if !ok {
-				continue
+				return errShuttingDown
 			}
 			if err := g.dispatchToStream(stream, streamID, ss, wi, ch, errCh); err != nil {
 				return err

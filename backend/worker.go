@@ -12,14 +12,17 @@ type TaskWorker[T WorkItem] interface {
 	// Start starts background polling for the activity work items.
 	Start(context.Context)
 
-	// DrainCompletion returns a channel that closes once a pending drain has
-	// actually completed. It remains useful when StopAndDrain returns because
-	// its context expired.
-	DrainCompletion() <-chan struct{}
-
 	// StopAndDrain stops the worker and waits for outstanding work items until
 	// the context expires.
 	StopAndDrain(context.Context) error
+}
+
+// drainCompletionWorker is an optional internal capability used to complete a
+// timed-out task-hub shutdown once a worker has actually drained. It is kept
+// separate from TaskWorker so existing external worker implementations remain
+// source compatible.
+type drainCompletionWorker interface {
+	DrainCompletion() <-chan struct{}
 }
 
 type TaskProcessor[T WorkItem] interface {

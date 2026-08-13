@@ -55,6 +55,12 @@ type delayedDrainWorker[T WorkItem] struct {
 	completionOnce atomic.Bool
 }
 
+type unobservableDrainWorker[T WorkItem] struct {
+	release chan struct{}
+	drained chan struct{}
+	once    atomic.Bool
+}
+
 func (*delayedDrainWorker[T]) Start(context.Context) {}
 
 func (w *delayedDrainWorker[T]) StopAndDrain(ctx context.Context) error {
@@ -91,14 +97,29 @@ func (w *deadlineWorker[T]) StopAndDrain(ctx context.Context) error {
 }
 func (w *deadlineWorker[T]) DrainCompletion() <-chan struct{} { return w.completion }
 
+func (*unobservableDrainWorker[T]) Start(context.Context) {}
+func (w *unobservableDrainWorker[T]) StopAndDrain(ctx context.Context) error {
+	if w.once.CompareAndSwap(false, true) {
+		go func() {
+			<-w.release
+			close(w.drained)
+		}()
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-w.drained:
+		return nil
+	}
+}
+
 type nonReentrantWorker[T WorkItem] struct {
 	calls   atomic.Int32
 	entered chan struct{}
 	release chan struct{}
 }
 
-func (*nonReentrantWorker[T]) Start(context.Context)            {}
-func (*nonReentrantWorker[T]) DrainCompletion() <-chan struct{} { return completedDrainCompletion() }
+func (*nonReentrantWorker[T]) Start(context.Context) {}
 func (w *nonReentrantWorker[T]) StopAndDrain(context.Context) error {
 	if w.calls.Add(1) != 1 {
 		return errors.New("concurrent StopAndDrain invocation")
@@ -110,21 +131,18 @@ func (w *nonReentrantWorker[T]) StopAndDrain(context.Context) error {
 
 type failingDrainWorker[T WorkItem] struct{}
 
-func (*failingDrainWorker[T]) Start(context.Context)            {}
-func (*failingDrainWorker[T]) DrainCompletion() <-chan struct{} { return completedDrainCompletion() }
+func (*failingDrainWorker[T]) Start(context.Context) {}
 func (*failingDrainWorker[T]) StopAndDrain(context.Context) error {
 	return errors.New("drain failed")
 }
 
-func (w *lifecycleWorker[T]) Start(context.Context)          { w.starts.Add(1) }
-func (*lifecycleWorker[T]) DrainCompletion() <-chan struct{} { return completedDrainCompletion() }
+func (w *lifecycleWorker[T]) Start(context.Context) { w.starts.Add(1) }
 func (w *lifecycleWorker[T]) StopAndDrain(context.Context) error {
 	w.stops.Add(1)
 	return nil
 }
 
-func (*shutdownWorker[T]) Start(context.Context)            {}
-func (*shutdownWorker[T]) DrainCompletion() <-chan struct{} { return completedDrainCompletion() }
+func (*shutdownWorker[T]) Start(context.Context) {}
 
 func (w *shutdownWorker[T]) StopAndDrain(context.Context) error {
 	w.stopped.Add(1)
@@ -255,7 +273,30 @@ func TestTaskHubWorkerWaitsForActualDrainBeforeStoppingBackend(t *testing.T) {
 	require.Equal(t, int32(1), be.starts.Load())
 }
 
-func TestTaskHubWorkerDoesNotRepeatDrainAfterWorkerError(t *testing.T) {
+func TestTaskHubWorkerDoesNotStopBackendAfterUnobservableTimedOutDrain(t *testing.T) {
+	workflowRelease := make(chan struct{})
+	activityRelease := make(chan struct{})
+	be := &lifecycleBackend{}
+	taskHub := &taskHubWorker{
+		backend:        be,
+		workflowWorker: &unobservableDrainWorker[*WorkflowWorkItem]{release: workflowRelease, drained: make(chan struct{})},
+		activityWorker: &unobservableDrainWorker[*ActivityWorkItem]{release: activityRelease, drained: make(chan struct{})},
+		logger:         DefaultLogger(),
+		started:        true,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	require.ErrorIs(t, taskHub.Shutdown(ctx), context.DeadlineExceeded)
+	close(workflowRelease)
+	close(activityRelease)
+	require.Eventually(t, func() bool {
+		return taskHub.Start(context.Background()) == ErrTaskHubStopping
+	}, time.Second, 10*time.Millisecond)
+	require.Zero(t, be.stops.Load())
+}
+
+func TestTaskHubWorkerDoesNotStopAfterWorkerErrorWithoutDrainSignal(t *testing.T) {
 	release := make(chan struct{})
 	workflowWorker := &nonReentrantWorker[*WorkflowWorkItem]{entered: make(chan struct{}), release: release}
 	taskHub := &taskHubWorker{
@@ -276,8 +317,6 @@ func TestTaskHubWorkerDoesNotRepeatDrainAfterWorkerError(t *testing.T) {
 	require.Equal(t, int32(1), workflowWorker.calls.Load())
 
 	close(release)
-	require.Eventually(t, func() bool {
-		return taskHub.Start(context.Background()) == nil
-	}, time.Second, 10*time.Millisecond)
+	require.ErrorIs(t, taskHub.Start(context.Background()), ErrTaskHubStopping)
 	require.Equal(t, int32(1), workflowWorker.calls.Load())
 }
