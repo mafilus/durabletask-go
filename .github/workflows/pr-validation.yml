@@ -18,6 +18,10 @@ env:
   PROTOC_VERSION: "25.x"
   PROTOC_GEN_GO: "v1.30"
   PROTOC_GEN_GO_GRPC: "v1.3"
+  # The PostgreSQL service is intentionally plaintext. pgx defaults to
+  # sslmode=prefer, which needlessly attempts TLS before retrying plaintext.
+  PGSSLMODE: disable
+  PGDATABASE: durabletask
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
@@ -33,7 +37,7 @@ jobs:
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_USER: postgres
-          POSTGRES_DB: postgres
+          POSTGRES_DB: durabletask
         # Set health checks to wait until postgres has started
         options: >-
           --health-cmd pg_isready

@@ -22,3 +22,11 @@ func TestNewPostgresOptionsUsesDocumentedPoolDefault(t *testing.T) {
 	options := NewPostgresOptions("db.example.test", 5432, "durabletask", "service-user", "password")
 	require.Equal(t, DefaultMaxConns, options.PgOptions.MaxConns)
 }
+
+func TestNewPostgresOptionsHonorsPGSSLMODE(t *testing.T) {
+	t.Setenv("PGSSLMODE", "disable")
+
+	options := NewPostgresOptions("db.example.test", 5432, "durabletask", "service-user", "password")
+	require.Nil(t, options.PgOptions.ConnConfig.Config.TLSConfig)
+	require.Empty(t, options.PgOptions.ConnConfig.Config.Fallbacks)
+}

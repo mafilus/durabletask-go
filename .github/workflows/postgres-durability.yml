@@ -33,6 +33,8 @@ env:
   PGUSER: postgres
   PGPASSWORD: postgres
   PGDATABASE: durabletask
+  # The GitHub Actions PostgreSQL service does not expose TLS.
+  PGSSLMODE: disable
   POSTGRES_CONNECTION_STRING: postgres://postgres:postgres@127.0.0.1:5432/durabletask?sslmode=disable
 
 jobs:

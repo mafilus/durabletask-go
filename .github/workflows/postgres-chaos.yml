@@ -12,6 +12,8 @@ env:
   PGUSER: postgres
   PGPASSWORD: postgres
   PGDATABASE: durabletask
+  # The isolated Docker PostgreSQL instance is plaintext-only.
+  PGSSLMODE: disable
   STRIX_TEST_POSTGRES_CHAOS: "1"
   STRIX_POSTGRES_CHAOS_COMPOSE_FILE: ${{ github.workspace }}/.github/postgres-chaos.compose.yml
   STRIX_POSTGRES_CHAOS_PROJECT: durabletask-chaos
