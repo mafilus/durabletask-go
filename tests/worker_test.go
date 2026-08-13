@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/mafilus/durabletask-go/api"
 	"github.com/mafilus/durabletask-go/api/protos"
 	"github.com/mafilus/durabletask-go/backend"
 	"github.com/mafilus/durabletask-go/backend/runtimestate"
 	"github.com/mafilus/durabletask-go/tests/mocks"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -79,7 +79,7 @@ func Test_TryProcessSingleWorkflowWorkItem_BasicFlow(t *testing.T) {
 		}
 	}, 1*time.Second, 100*time.Millisecond)
 
-	worker.StopAndDrain()
+	require.NoError(t, worker.StopAndDrain(context.Background()))
 
 	t.Logf("state.NewEvents: %v", state.NewEvents)
 	require.Len(t, state.NewEvents, 2)
@@ -149,7 +149,7 @@ func Test_TryProcessSingleWorkflowWorkItem_Idempotency(t *testing.T) {
 
 	require.Eventually(t, completed.Load, 2*time.Second, 10*time.Millisecond)
 
-	worker.StopAndDrain()
+	require.NoError(t, worker.StopAndDrain(context.Background()))
 
 	t.Logf("state.NewEvents: %v", wi.State.NewEvents)
 	require.Len(t, wi.State.NewEvents, 3)
@@ -242,7 +242,7 @@ func Test_TryProcessSingleWorkflowWorkItem_ExecutionStartedAndCompleted(t *testi
 		}
 	}, 1*time.Second, 100*time.Millisecond)
 
-	worker.StopAndDrain()
+	require.NoError(t, worker.StopAndDrain(context.Background()))
 
 	t.Logf("state.NewEvents: %v", state.NewEvents)
 	require.Len(t, state.NewEvents, 3)
@@ -283,14 +283,14 @@ func Test_TaskWorker(t *testing.T) {
 	require.Equal(t, first, tp.CompletedWorkItems()[0])
 	require.Equal(t, second, tp.CompletedWorkItems()[1])
 
-	drainFinished := make(chan bool)
+	drainFinished := make(chan error, 1)
 	go func() {
-		worker.StopAndDrain()
-		drainFinished <- true
+		drainFinished <- worker.StopAndDrain(context.Background())
 	}()
 
 	select {
-	case <-drainFinished:
+	case err := <-drainFinished:
+		require.NoError(t, err)
 		return
 	case <-time.After(1 * time.Second):
 		t.Fatalf("worker stop and drain not finished within timeout")
@@ -332,14 +332,14 @@ func Test_StartAndStop(t *testing.T) {
 	}, time.Second*5, 100*time.Millisecond)
 
 	// due to the configuration of the TestTaskProcessor, now the work item is blocked on ProcessWorkItem until the context is cancelled
-	drainFinished := make(chan bool)
+	drainFinished := make(chan error, 1)
 	go func() {
-		worker.StopAndDrain()
-		drainFinished <- true
+		drainFinished <- worker.StopAndDrain(context.Background())
 	}()
 
 	select {
-	case <-drainFinished:
+	case err := <-drainFinished:
+		require.NoError(t, err)
 		return
 	case <-time.After(1 * time.Second):
 		t.Fatalf("worker stop and drain not finished within timeout")

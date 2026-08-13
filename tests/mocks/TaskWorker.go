@@ -56,9 +56,19 @@ func (_c *TaskWorker_Start_Call[T]) RunAndReturn(run func(context.Context)) *Tas
 	return _c
 }
 
-// StopAndDrain provides a mock function with no fields
-func (_m *TaskWorker[T]) StopAndDrain() {
-	_m.Called()
+// StopAndDrain provides a mock function with fields: ctx
+func (_m *TaskWorker[T]) StopAndDrain(ctx context.Context) error {
+	ret := _m.Called(ctx)
+	if len(ret) == 0 {
+		panic("no return value specified for StopAndDrain")
+	}
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context) error); ok {
+		r0 = rf(ctx)
+	} else {
+		r0, _ = ret.Get(0).(error)
+	}
+	return r0
 }
 
 // TaskWorker_StopAndDrain_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'StopAndDrain'
@@ -67,24 +77,24 @@ type TaskWorker_StopAndDrain_Call[T backend.WorkItem] struct {
 }
 
 // StopAndDrain is a helper method to define mock.On call
-func (_e *TaskWorker_Expecter[T]) StopAndDrain() *TaskWorker_StopAndDrain_Call[T] {
-	return &TaskWorker_StopAndDrain_Call[T]{Call: _e.mock.On("StopAndDrain")}
+func (_e *TaskWorker_Expecter[T]) StopAndDrain(ctx interface{}) *TaskWorker_StopAndDrain_Call[T] {
+	return &TaskWorker_StopAndDrain_Call[T]{Call: _e.mock.On("StopAndDrain", ctx)}
 }
 
-func (_c *TaskWorker_StopAndDrain_Call[T]) Run(run func()) *TaskWorker_StopAndDrain_Call[T] {
+func (_c *TaskWorker_StopAndDrain_Call[T]) Run(run func(context.Context)) *TaskWorker_StopAndDrain_Call[T] {
 	_c.Call.Run(func(args mock.Arguments) {
-		run()
+		run(args[0].(context.Context))
 	})
 	return _c
 }
 
-func (_c *TaskWorker_StopAndDrain_Call[T]) Return() *TaskWorker_StopAndDrain_Call[T] {
-	_c.Call.Return()
+func (_c *TaskWorker_StopAndDrain_Call[T]) Return(err error) *TaskWorker_StopAndDrain_Call[T] {
+	_c.Call.Return(err)
 	return _c
 }
 
-func (_c *TaskWorker_StopAndDrain_Call[T]) RunAndReturn(run func()) *TaskWorker_StopAndDrain_Call[T] {
-	_c.Run(run)
+func (_c *TaskWorker_StopAndDrain_Call[T]) RunAndReturn(run func(context.Context) error) *TaskWorker_StopAndDrain_Call[T] {
+	_c.Call.Return(run)
 	return _c
 }
 

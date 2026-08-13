@@ -72,6 +72,35 @@ func (*failingActivityProcessor) CompleteWorkItem(context.Context, *ActivityWork
 	return nil
 }
 
+type stuckWorkItem struct{}
+
+func (stuckWorkItem) String() string   { return "stuck" }
+func (stuckWorkItem) IsWorkItem() bool { return true }
+
+type stuckProcessor struct {
+	pollOnce sync.Once
+	started  chan struct{}
+	release  chan struct{}
+}
+
+func (*stuckProcessor) Name() string { return "stuck" }
+func (p *stuckProcessor) NextWorkItem(ctx context.Context) (stuckWorkItem, error) {
+	emit := false
+	p.pollOnce.Do(func() { emit = true })
+	if emit {
+		return stuckWorkItem{}, nil
+	}
+	<-ctx.Done()
+	return stuckWorkItem{}, ctx.Err()
+}
+func (p *stuckProcessor) ProcessWorkItem(context.Context, stuckWorkItem) error {
+	close(p.started)
+	<-p.release
+	return nil
+}
+func (*stuckProcessor) AbandonWorkItem(context.Context, stuckWorkItem) error  { return nil }
+func (*stuckProcessor) CompleteWorkItem(context.Context, stuckWorkItem) error { return nil }
+
 func TestTaskWorkerStartAndStopAreIdempotent(t *testing.T) {
 	processor := &blockingActivityProcessor{started: make(chan struct{})}
 	worker := NewTaskWorker[*ActivityWorkItem](processor, DefaultLogger(), WithMaxParallelism(1))
@@ -83,8 +112,8 @@ func TestTaskWorkerStartAndStopAreIdempotent(t *testing.T) {
 		t.Fatal("worker did not start polling")
 	}
 
-	worker.StopAndDrain()
-	worker.StopAndDrain()
+	require.NoError(t, worker.StopAndDrain(context.Background()))
+	require.NoError(t, worker.StopAndDrain(context.Background()))
 	require.Equal(t, int32(1), processor.calls.Load())
 }
 
@@ -103,8 +132,28 @@ func TestTaskWorkerBacksOffAndCancellationInterruptsRetry(t *testing.T) {
 	require.Equal(t, int32(1), processor.calls.Load())
 
 	started := time.Now()
-	worker.StopAndDrain()
+	require.NoError(t, worker.StopAndDrain(context.Background()))
 	require.Less(t, time.Since(started), workerRetryInitialDelay/2)
+}
+
+func TestTaskWorkerStopAndDrainHonorsDeadline(t *testing.T) {
+	processor := &stuckProcessor{started: make(chan struct{}), release: make(chan struct{})}
+	worker := NewTaskWorker[stuckWorkItem](processor, DefaultLogger(), WithMaxParallelism(1))
+	worker.Start(context.Background())
+	select {
+	case <-processor.started:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not start processing")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	require.ErrorIs(t, worker.StopAndDrain(ctx), context.DeadlineExceeded)
+
+	close(processor.release)
+	require.Eventually(t, func() bool {
+		return worker.StopAndDrain(context.Background()) == nil
+	}, time.Second, 10*time.Millisecond)
 }
 
 func TestNewTaskWorkerLimitsParallelismByDefault(t *testing.T) {

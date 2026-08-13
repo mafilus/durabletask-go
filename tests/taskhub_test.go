@@ -33,11 +33,16 @@ func Test_TaskHubWorkerStopsDependencies(t *testing.T) {
 	orchWorker := mocks.NewTaskWorker[*backend.WorkflowWorkItem](t)
 	actWorker := mocks.NewTaskWorker[*backend.ActivityWorkItem](t)
 
+	be.EXPECT().CreateTaskHub(ctx).Return(nil).Once()
+	be.EXPECT().Start(ctx).Return(nil).Once()
+	orchWorker.EXPECT().Start(ctx).Return().Once()
+	actWorker.EXPECT().Start(ctx).Return().Once()
 	be.EXPECT().Stop(ctx).Return(nil).Once()
-	orchWorker.EXPECT().StopAndDrain().Return().Once()
-	actWorker.EXPECT().StopAndDrain().Return().Once()
+	orchWorker.EXPECT().StopAndDrain(ctx).Return(nil).Once()
+	actWorker.EXPECT().StopAndDrain(ctx).Return(nil).Once()
 
 	w := backend.NewTaskHubWorker(be, orchWorker, actWorker, logger)
+	assert.NoError(t, w.Start(ctx))
 	err := w.Shutdown(ctx)
 	assert.NoError(t, err)
 }

@@ -18,6 +18,7 @@ var (
 	ErrNotInitialized        = errors.New("backend not initialized")
 	ErrWorkItemLockLost      = errors.New("lock on work-item was lost")
 	ErrBackendAlreadyStarted = errors.New("backend is already started")
+	ErrTaskHubStopping       = errors.New("task hub is still stopping")
 )
 
 type (

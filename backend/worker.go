@@ -12,8 +12,9 @@ type TaskWorker[T WorkItem] interface {
 	// Start starts background polling for the activity work items.
 	Start(context.Context)
 
-	// StopAndDrain stops the worker and waits for all outstanding work items to finish.
-	StopAndDrain()
+	// StopAndDrain stops the worker and waits for outstanding work items until
+	// the context expires.
+	StopAndDrain(context.Context) error
 }
 
 type TaskProcessor[T WorkItem] interface {
@@ -30,12 +31,12 @@ type worker[T WorkItem] struct {
 	processor    TaskProcessor[T]
 	parallelLock chan struct{}
 
-	mu       sync.Mutex
-	running  bool
-	cancel   context.CancelFunc
-	pollDone chan struct{}
-	pollWG   sync.WaitGroup
-	workWG   sync.WaitGroup
+	mu        sync.Mutex
+	running   bool
+	cancel    context.CancelFunc
+	pollDone  chan struct{}
+	drainDone chan struct{}
+	workWG    sync.WaitGroup
 }
 
 type NewTaskWorkerOptions func(*WorkerOptions)
@@ -50,6 +51,7 @@ const (
 
 	workerRetryInitialDelay = 100 * time.Millisecond
 	workerRetryMaxDelay     = 5 * time.Second
+	workerAbandonTimeout    = 5 * time.Second
 )
 
 // DefaultMaxParallelism returns the default limit used by workflow and activity
@@ -108,14 +110,14 @@ func (w *worker[T]) Start(ctx context.Context) {
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	pollDone := make(chan struct{})
+	drainDone := make(chan struct{})
 	w.running = true
 	w.cancel = cancel
 	w.pollDone = pollDone
-	w.pollWG.Add(1)
+	w.drainDone = drainDone
 	w.mu.Unlock()
 
 	go func() {
-		defer w.pollWG.Done()
 		defer close(pollDone)
 		defer w.logger.Infof("%v: worker stopped", w.Name())
 
@@ -153,29 +155,40 @@ func (w *worker[T]) Start(ctx context.Context) {
 			}()
 		}
 	}()
+	go func() {
+		// Waiting only after polling has stopped avoids racing Wait with Add.
+		<-pollDone
+		w.workWG.Wait()
+
+		w.mu.Lock()
+		if w.pollDone == pollDone {
+			w.running = false
+			w.cancel = nil
+			w.pollDone = nil
+			w.drainDone = nil
+		}
+		w.mu.Unlock()
+		close(drainDone)
+	}()
 }
 
-func (w *worker[T]) StopAndDrain() {
+func (w *worker[T]) StopAndDrain(ctx context.Context) error {
 	w.mu.Lock()
 	if !w.running {
 		w.mu.Unlock()
-		return
+		return nil
 	}
 	cancel := w.cancel
-	pollDone := w.pollDone
+	drainDone := w.drainDone
 	w.mu.Unlock()
 
 	cancel()
-	<-pollDone
-	w.workWG.Wait()
-
-	w.mu.Lock()
-	if w.pollDone == pollDone {
-		w.running = false
-		w.cancel = nil
-		w.pollDone = nil
+	select {
+	case <-drainDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-	w.mu.Unlock()
 }
 
 func retryDelay(attempt int) time.Duration {
@@ -206,19 +219,23 @@ func (w *worker[T]) processWorkItem(ctx context.Context, wi T) {
 
 	if err := w.processor.ProcessWorkItem(ctx, wi); err != nil {
 		w.logger.Errorf("%v: failed to process work item: %v", w.Name(), err)
-		if err = w.processor.AbandonWorkItem(context.Background(), wi); err != nil {
-			w.logger.Errorf("%v: failed to abandon work item: %v", w.Name(), err)
-		}
+		w.abandonWorkItem(wi)
 		return
 	}
 
 	if err := w.processor.CompleteWorkItem(ctx, wi); err != nil {
 		w.logger.Errorf("%v: failed to complete work item: %v", w.Name(), err)
-		if err = w.processor.AbandonWorkItem(context.Background(), wi); err != nil {
-			w.logger.Errorf("%v: failed to abandon work item: %v", w.Name(), err)
-		}
+		w.abandonWorkItem(wi)
 		return
 	}
 
 	w.logger.Debugf("%v: work item processed successfully", w.Name())
+}
+
+func (w *worker[T]) abandonWorkItem(wi T) {
+	ctx, cancel := context.WithTimeout(context.Background(), workerAbandonTimeout)
+	defer cancel()
+	if err := w.processor.AbandonWorkItem(ctx, wi); err != nil {
+		w.logger.Errorf("%v: failed to abandon work item: %v", w.Name(), err)
+	}
 }
