@@ -17,14 +17,6 @@ type TaskWorker[T WorkItem] interface {
 	StopAndDrain(context.Context) error
 }
 
-// drainCompletionWorker is an optional internal capability used to complete a
-// timed-out task-hub shutdown once a worker has actually drained. It is kept
-// separate from TaskWorker so existing external worker implementations remain
-// source compatible.
-type drainCompletionWorker interface {
-	DrainCompletion() <-chan struct{}
-}
-
 type TaskProcessor[T WorkItem] interface {
 	Name() string
 	ProcessWorkItem(context.Context, T) error
@@ -197,20 +189,6 @@ func (w *worker[T]) StopAndDrain(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-}
-
-// DrainCompletion returns a channel that closes when the current drain has
-// completed. If the worker is already stopped, the returned channel is closed.
-func (w *worker[T]) DrainCompletion() <-chan struct{} {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.drainDone != nil {
-		return w.drainDone
-	}
-
-	done := make(chan struct{})
-	close(done)
-	return done
 }
 
 func retryDelay(attempt int) time.Duration {

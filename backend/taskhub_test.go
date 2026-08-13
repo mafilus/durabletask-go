@@ -59,6 +59,7 @@ type unobservableDrainWorker[T WorkItem] struct {
 	release chan struct{}
 	drained chan struct{}
 	once    atomic.Bool
+	calls   atomic.Int32
 }
 
 func (*delayedDrainWorker[T]) Start(context.Context) {}
@@ -99,6 +100,7 @@ func (w *deadlineWorker[T]) DrainCompletion() <-chan struct{} { return w.complet
 
 func (*unobservableDrainWorker[T]) Start(context.Context) {}
 func (w *unobservableDrainWorker[T]) StopAndDrain(ctx context.Context) error {
+	w.calls.Add(1)
 	if w.once.CompareAndSwap(false, true) {
 		go func() {
 			<-w.release
@@ -238,9 +240,8 @@ func TestTaskHubWorkerRefusesStartUntilTimedOutDrainCompletes(t *testing.T) {
 
 	close(workflowRelease)
 	close(activityRelease)
-	require.Eventually(t, func() bool {
-		return taskHub.Start(context.Background()) == nil
-	}, time.Second, 10*time.Millisecond)
+	require.NoError(t, taskHub.Shutdown(context.Background()))
+	require.NoError(t, taskHub.Start(context.Background()))
 	require.Equal(t, int32(1), be.starts.Load())
 }
 
@@ -266,14 +267,13 @@ func TestTaskHubWorkerWaitsForActualDrainBeforeStoppingBackend(t *testing.T) {
 
 	close(workflowRelease)
 	close(activityRelease)
-	require.Eventually(t, func() bool { return be.stops.Load() == 1 }, time.Second, 10*time.Millisecond)
-	require.Eventually(t, func() bool {
-		return taskHub.Start(context.Background()) == nil
-	}, time.Second, 10*time.Millisecond)
+	require.NoError(t, taskHub.Shutdown(context.Background()))
+	require.Equal(t, int32(1), be.stops.Load())
+	require.NoError(t, taskHub.Start(context.Background()))
 	require.Equal(t, int32(1), be.starts.Load())
 }
 
-func TestTaskHubWorkerDoesNotStopBackendAfterUnobservableTimedOutDrain(t *testing.T) {
+func TestTaskHubWorkerResumesUnobservableTimedOutDrain(t *testing.T) {
 	workflowRelease := make(chan struct{})
 	activityRelease := make(chan struct{})
 	be := &lifecycleBackend{}
@@ -288,12 +288,16 @@ func TestTaskHubWorkerDoesNotStopBackendAfterUnobservableTimedOutDrain(t *testin
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 	require.ErrorIs(t, taskHub.Shutdown(ctx), context.DeadlineExceeded)
+	retryCtx, retryCancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer retryCancel()
+	require.ErrorIs(t, taskHub.Shutdown(retryCtx), context.DeadlineExceeded)
+	require.Equal(t, int32(1), taskHub.workflowWorker.(*unobservableDrainWorker[*WorkflowWorkItem]).calls.Load())
+	require.Equal(t, int32(1), taskHub.activityWorker.(*unobservableDrainWorker[*ActivityWorkItem]).calls.Load())
 	close(workflowRelease)
 	close(activityRelease)
-	require.Eventually(t, func() bool {
-		return taskHub.Start(context.Background()) == ErrTaskHubStopping
-	}, time.Second, 10*time.Millisecond)
-	require.Zero(t, be.stops.Load())
+	require.NoError(t, taskHub.Shutdown(context.Background()))
+	require.Equal(t, int32(1), be.stops.Load())
+	require.NoError(t, taskHub.Start(context.Background()))
 }
 
 func TestTaskHubWorkerDoesNotStopAfterWorkerErrorWithoutDrainSignal(t *testing.T) {
@@ -307,7 +311,9 @@ func TestTaskHubWorkerDoesNotStopAfterWorkerErrorWithoutDrainSignal(t *testing.T
 		started:        true,
 	}
 
-	require.Error(t, taskHub.Shutdown(context.Background()))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	require.ErrorIs(t, taskHub.Shutdown(ctx), context.DeadlineExceeded)
 	select {
 	case <-workflowWorker.entered:
 	case <-time.After(time.Second):
@@ -317,6 +323,7 @@ func TestTaskHubWorkerDoesNotStopAfterWorkerErrorWithoutDrainSignal(t *testing.T
 	require.Equal(t, int32(1), workflowWorker.calls.Load())
 
 	close(release)
+	require.Error(t, taskHub.Shutdown(context.Background()))
 	require.ErrorIs(t, taskHub.Start(context.Background()), ErrTaskHubStopping)
 	require.Equal(t, int32(1), workflowWorker.calls.Load())
 }

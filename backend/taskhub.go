@@ -24,6 +24,8 @@ type taskHubWorker struct {
 	mu             sync.Mutex
 	started        bool
 	stopping       bool
+	shutdownDone   chan struct{}
+	shutdownErr    error
 }
 
 func NewTaskHubWorker(be Backend, workflowWorker TaskWorker[*WorkflowWorkItem], activityWorker TaskWorker[*ActivityWorkItem], logger Logger) TaskHubWorker {
@@ -63,100 +65,67 @@ func (w *taskHubWorker) Start(ctx context.Context) error {
 
 func (w *taskHubWorker) Shutdown(ctx context.Context) error {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	if !w.started {
+		w.mu.Unlock()
 		return nil
 	}
-	if w.stopping {
-		return ErrTaskHubStopping
+	if !w.stopping {
+		w.stopping = true
+		w.shutdownDone = make(chan struct{})
+		w.shutdownErr = nil
+		w.logger.Info("workers stopping and draining...")
+		go w.finishShutdown(context.WithoutCancel(ctx))
 	}
-	w.stopping = true
+	done := w.shutdownDone
+	w.mu.Unlock()
 
-	w.logger.Info("workers stopping and draining...")
+	select {
+	case <-done:
+		w.mu.Lock()
+		err := w.shutdownErr
+		w.mu.Unlock()
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
 
-	workflowCompletion := drainCompletion[*WorkflowWorkItem](w.workflowWorker)
-	activityCompletion := drainCompletion[*ActivityWorkItem](w.activityWorker)
+// finishShutdown uses a background context so a caller timeout only stops
+// waiting for shutdown; it never interrupts a worker's drain. This preserves
+// a single, non-overlapping StopAndDrain call for external TaskWorker
+// implementations that do not expose a separate completion signal.
+func (w *taskHubWorker) finishShutdown(drainCtx context.Context) {
 	workflowDrained := make(chan error, 1)
 	activityDrained := make(chan error, 1)
-	go func() { workflowDrained <- w.workflowWorker.StopAndDrain(ctx) }()
-	go func() { activityDrained <- w.activityWorker.StopAndDrain(ctx) }()
-	for remaining := 2; remaining > 0; {
-		select {
-		case err := <-workflowDrained:
-			workflowDrained = nil
-			remaining--
-			if err != nil {
-				w.finishShutdownWhenDrained(workflowDrained, activityDrained, workflowCompletion, activityCompletion)
-				return err
-			}
-		case err := <-activityDrained:
-			activityDrained = nil
-			remaining--
-			if err != nil {
-				w.finishShutdownWhenDrained(workflowDrained, activityDrained, workflowCompletion, activityCompletion)
-				return err
-			}
-		case <-ctx.Done():
-			w.finishShutdownWhenDrained(workflowDrained, activityDrained, workflowCompletion, activityCompletion)
-			return ctx.Err()
+	go func() { workflowDrained <- w.workflowWorker.StopAndDrain(drainCtx) }()
+	go func() { activityDrained <- w.activityWorker.StopAndDrain(drainCtx) }()
+
+	workflowErr := <-workflowDrained
+	activityErr := <-activityDrained
+	if workflowErr != nil || activityErr != nil {
+		err := workflowErr
+		if err == nil {
+			err = activityErr
 		}
-	}
-	w.logger.Info("finished stopping and draining workers!")
-
-	w.logger.Info("backend stopping...")
-	err := w.backend.Stop(ctx)
-	w.started = false
-	w.stopping = false
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func drainCompletion[T WorkItem](worker TaskWorker[T]) <-chan struct{} {
-	if worker, ok := worker.(drainCompletionWorker); ok {
-		return worker.DrainCompletion()
-	}
-	return nil
-}
-
-// finishShutdownWhenDrained arranges deferred backend shutdown only when every
-// worker provides a real drain-completion signal. TaskWorker deliberately does
-// not require that capability for source compatibility, so an external worker
-// that returns early from StopAndDrain cannot be mistaken for a drained worker.
-func (w *taskHubWorker) finishShutdownWhenDrained(workflowDrained, activityDrained <-chan error, workflowCompletion, activityCompletion <-chan struct{}) {
-	if workflowCompletion == nil || activityCompletion == nil {
-		w.logger.Warn("not stopping backend after interrupted drain: a worker does not expose drain completion")
+		w.finishShutdownWithError(err, false)
 		return
 	}
-	go w.finishShutdownAfterDrain(workflowDrained, activityDrained, workflowCompletion, activityCompletion)
+
+	w.logger.Info("finished stopping and draining workers!")
+	w.logger.Info("backend stopping...")
+	ctx, cancel := context.WithTimeout(context.Background(), taskHubCleanupTimeout)
+	err := w.backend.Stop(ctx)
+	cancel()
+	w.finishShutdownWithError(err, true)
 }
 
-// finishShutdownAfterDrain completes an interrupted shutdown without allowing
-// a new Start to race workers that are still draining.
-func (w *taskHubWorker) finishShutdownAfterDrain(workflowDrained, activityDrained <-chan error, workflowCompletion, activityCompletion <-chan struct{}) {
-	if workflowDrained != nil {
-		<-workflowDrained
-	}
-	if activityDrained != nil {
-		<-activityDrained
-	}
-	if workflowCompletion != nil {
-		<-workflowCompletion
-	}
-	if activityCompletion != nil {
-		<-activityCompletion
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), taskHubCleanupTimeout)
-	defer cancel()
-	if err := w.backend.Stop(ctx); err != nil {
-		w.logger.Errorf("failed to stop backend after workers drained: %v", err)
-	}
-
+func (w *taskHubWorker) finishShutdownWithError(err error, stopped bool) {
 	w.mu.Lock()
-	w.started = false
-	w.stopping = false
+	w.shutdownErr = err
+	if stopped {
+		w.started = false
+		w.stopping = false
+	}
+	close(w.shutdownDone)
 	w.mu.Unlock()
 }
