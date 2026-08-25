@@ -218,6 +218,24 @@ func (be *postgresBackend) WatchWorkflowRuntimeStatus(ctx context.Context, id ap
 
 // CreateTaskHub creates the postgres database and applies the schema
 func (be *postgresBackend) CreateTaskHub(ctx context.Context) error {
+	if err := be.OpenTaskHub(ctx); err != nil {
+		return err
+	}
+	// Initialize database
+	if _, err := be.db.Exec(ctx, schema); err != nil {
+		be.db.Close()
+		be.db = nil
+		return fmt.Errorf("failed to initialize the database: %w", err)
+	}
+	return nil
+}
+
+// OpenTaskHub connects to a task hub provisioned separately without applying
+// its schema. Service processes use this path to avoid implicit migrations.
+func (be *postgresBackend) OpenTaskHub(ctx context.Context) error {
+	if be.db != nil {
+		return nil
+	}
 	openDB := be.openDB
 	if openDB == nil {
 		openDB = openPostgresDB
@@ -227,13 +245,7 @@ func (be *postgresBackend) CreateTaskHub(ctx context.Context) error {
 		be.logger.Error("CreateTaskHub", "failed to create a new postgres pool", err)
 		return fmt.Errorf("failed to create a new postgres pool: %w", err)
 	}
-	// Initialize database
-	if _, err := db.Exec(ctx, schema); err != nil {
-		db.Close()
-		return fmt.Errorf("failed to initialize the database: %w", err)
-	}
 	be.db = db
-
 	return nil
 }
 

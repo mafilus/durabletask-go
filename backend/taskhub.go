@@ -12,8 +12,17 @@ type TaskHubWorker interface {
 	// Start starts the backend and the configured internal workers.
 	Start(context.Context) error
 
+	// StartExisting starts a task hub that was provisioned separately. It never
+	// invokes Backend.CreateTaskHub, allowing service processes to run with
+	// read/write application privileges that cannot perform schema DDL.
+	StartExisting(context.Context) error
+
 	// Shutdown stops the backend and all internal workers.
 	Shutdown(context.Context) error
+}
+
+type existingTaskHubBackend interface {
+	OpenTaskHub(context.Context) error
 }
 
 type taskHubWorker struct {
@@ -38,6 +47,14 @@ func NewTaskHubWorker(be Backend, workflowWorker TaskWorker[*WorkflowWorkItem], 
 }
 
 func (w *taskHubWorker) Start(ctx context.Context) error {
+	return w.start(ctx, true)
+}
+
+func (w *taskHubWorker) StartExisting(ctx context.Context) error {
+	return w.start(ctx, false)
+}
+
+func (w *taskHubWorker) start(ctx context.Context, create bool) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.stopping {
@@ -47,8 +64,18 @@ func (w *taskHubWorker) Start(ctx context.Context) error {
 		return nil
 	}
 
-	if err := w.backend.CreateTaskHub(ctx); err != nil && err != ErrTaskHubExists {
-		return err
+	if create {
+		if err := w.backend.CreateTaskHub(ctx); err != nil && err != ErrTaskHubExists {
+			return err
+		}
+	} else {
+		existing, ok := w.backend.(existingTaskHubBackend)
+		if !ok {
+			return ErrTaskHubNotFound
+		}
+		if err := existing.OpenTaskHub(ctx); err != nil {
+			return err
+		}
 	}
 
 	if err := w.backend.Start(ctx); err != nil {

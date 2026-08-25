@@ -29,14 +29,17 @@ type shutdownWorker[T WorkItem] struct {
 
 type lifecycleBackend struct {
 	Backend
+	creates atomic.Int32
+	opens   atomic.Int32
 	starts  atomic.Int32
 	stops   atomic.Int32
 	stopErr error
 }
 
-func (*lifecycleBackend) CreateTaskHub(context.Context) error { return nil }
-func (b *lifecycleBackend) Start(context.Context) error       { b.starts.Add(1); return nil }
-func (b *lifecycleBackend) Stop(context.Context) error        { b.stops.Add(1); return b.stopErr }
+func (b *lifecycleBackend) CreateTaskHub(context.Context) error { b.creates.Add(1); return nil }
+func (b *lifecycleBackend) OpenTaskHub(context.Context) error   { b.opens.Add(1); return nil }
+func (b *lifecycleBackend) Start(context.Context) error         { b.starts.Add(1); return nil }
+func (b *lifecycleBackend) Stop(context.Context) error          { b.stops.Add(1); return b.stopErr }
 
 type lifecycleWorker[T WorkItem] struct {
 	starts atomic.Int32
@@ -187,6 +190,19 @@ func TestTaskHubWorkerStartAndShutdownAreIdempotent(t *testing.T) {
 	require.NoError(t, taskHub.Shutdown(context.Background()))
 	require.Equal(t, int32(1), workflowWorker.stops.Load())
 	require.Equal(t, int32(1), activityWorker.stops.Load())
+}
+
+func TestTaskHubWorkerStartExistingDoesNotCreateSchema(t *testing.T) {
+	be := &lifecycleBackend{}
+	workflowWorker := &lifecycleWorker[*WorkflowWorkItem]{}
+	activityWorker := &lifecycleWorker[*ActivityWorkItem]{}
+	taskHub := NewTaskHubWorker(be, workflowWorker, activityWorker, DefaultLogger())
+
+	require.NoError(t, taskHub.StartExisting(context.Background()))
+	require.Equal(t, int32(0), be.creates.Load())
+	require.Equal(t, int32(1), be.opens.Load())
+	require.Equal(t, int32(1), be.starts.Load())
+	require.NoError(t, taskHub.Shutdown(context.Background()))
 }
 
 func TestTaskHubWorkerCanRestartAfterBackendStopFailure(t *testing.T) {
