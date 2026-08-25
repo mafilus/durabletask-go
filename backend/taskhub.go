@@ -2,11 +2,14 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 )
 
 const taskHubCleanupTimeout = 5 * time.Second
+
+var ErrTaskHubForceShutdownUnsupported = errors.New("task hub worker does not support forced shutdown")
 
 type TaskHubWorker interface {
 	// Start starts the backend and the configured internal workers.
@@ -19,6 +22,11 @@ type TaskHubWorker interface {
 
 	// Shutdown stops the backend and all internal workers.
 	Shutdown(context.Context) error
+
+	// ForceShutdown fences active work after a graceful drain exceeded its
+	// caller budget. It returns only once workers can no longer use their
+	// injected activity dependencies and the backend has stopped.
+	ForceShutdown(context.Context) error
 }
 
 type existingTaskHubBackend interface {
@@ -106,6 +114,52 @@ func (w *taskHubWorker) Shutdown(ctx context.Context) error {
 	done := w.shutdownDone
 	w.mu.Unlock()
 
+	select {
+	case <-done:
+		w.mu.Lock()
+		err := w.shutdownErr
+		w.mu.Unlock()
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// ForceShutdown cancels active processor contexts, then waits for the existing
+// serial shutdown to drain workers and stop the backend. It never overlaps
+// StopAndDrain calls, which is required for external TaskWorker implementations.
+func (w *taskHubWorker) ForceShutdown(ctx context.Context) error {
+	w.mu.Lock()
+	if !w.started {
+		err := w.shutdownErr
+		w.mu.Unlock()
+		return err
+	}
+	if !w.stopping {
+		w.stopping = true
+		w.shutdownDone = make(chan struct{})
+		w.shutdownErr = nil
+		go w.finishShutdown(context.Background())
+	}
+	workflowWorker := w.workflowWorker
+	activityWorker := w.activityWorker
+	done := w.shutdownDone
+	w.mu.Unlock()
+
+	workflow, ok := workflowWorker.(ForceStoppableTaskWorker[*WorkflowWorkItem])
+	if !ok {
+		return ErrTaskHubForceShutdownUnsupported
+	}
+	activity, ok := activityWorker.(ForceStoppableTaskWorker[*ActivityWorkItem])
+	if !ok {
+		return ErrTaskHubForceShutdownUnsupported
+	}
+	if err := workflow.ForceStop(ctx); err != nil {
+		return err
+	}
+	if err := activity.ForceStop(ctx); err != nil {
+		return err
+	}
 	select {
 	case <-done:
 		w.mu.Lock()

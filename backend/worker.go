@@ -17,6 +17,13 @@ type TaskWorker[T WorkItem] interface {
 	StopAndDrain(context.Context) error
 }
 
+// ForceStoppableTaskWorker is implemented by workers that can fence new work
+// and wait for active work contexts to finish after a graceful drain deadline.
+// It remains optional for externally implemented TaskWorker values.
+type ForceStoppableTaskWorker[T WorkItem] interface {
+	ForceStop(context.Context) error
+}
+
 type TaskProcessor[T WorkItem] interface {
 	Name() string
 	ProcessWorkItem(context.Context, T) error
@@ -173,6 +180,28 @@ func (w *worker[T]) Start(ctx context.Context) {
 }
 
 func (w *worker[T]) StopAndDrain(ctx context.Context) error {
+	w.mu.Lock()
+	if !w.running {
+		w.mu.Unlock()
+		return nil
+	}
+	cancel := w.cancel
+	drainDone := w.drainDone
+	w.mu.Unlock()
+
+	cancel()
+	select {
+	case <-drainDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// ForceStop cancels the worker context and waits for all work started by this
+// worker to finish. Processors receive that cancelled context and must not
+// retain access to injected dependencies after ForceStop returns.
+func (w *worker[T]) ForceStop(ctx context.Context) error {
 	w.mu.Lock()
 	if !w.running {
 		w.mu.Unlock()

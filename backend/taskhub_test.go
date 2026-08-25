@@ -52,6 +52,13 @@ type deadlineWorker[T WorkItem] struct {
 	completionOnce atomic.Bool
 }
 
+type forceDrainWorker[T WorkItem] struct {
+	release        chan struct{}
+	completion     chan struct{}
+	completionOnce atomic.Bool
+	forceOnce      atomic.Bool
+}
+
 type delayedDrainWorker[T WorkItem] struct {
 	release        chan struct{}
 	completion     chan struct{}
@@ -100,6 +107,29 @@ func (w *deadlineWorker[T]) StopAndDrain(ctx context.Context) error {
 	}
 }
 func (w *deadlineWorker[T]) DrainCompletion() <-chan struct{} { return w.completion }
+
+func (*forceDrainWorker[T]) Start(context.Context) {}
+func (w *forceDrainWorker[T]) StopAndDrain(ctx context.Context) error {
+	if w.completionOnce.CompareAndSwap(false, true) {
+		go func() {
+			<-w.release
+			close(w.completion)
+		}()
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-w.completion:
+		return nil
+	}
+}
+func (w *forceDrainWorker[T]) ForceStop(context.Context) error {
+	if w.forceOnce.CompareAndSwap(false, true) {
+		close(w.release)
+	}
+	<-w.completion
+	return nil
+}
 
 func (*unobservableDrainWorker[T]) Start(context.Context) {}
 func (w *unobservableDrainWorker[T]) StopAndDrain(ctx context.Context) error {
@@ -235,6 +265,27 @@ func TestTaskHubWorkerShutdownHonorsDrainDeadline(t *testing.T) {
 	require.ErrorIs(t, taskHub.Shutdown(ctx), context.DeadlineExceeded)
 	close(workflowWorker.release)
 	close(activityWorker.release)
+}
+
+func TestTaskHubWorkerForceShutdownFencesWorkersAfterDrainDeadline(t *testing.T) {
+	workflowWorker := &forceDrainWorker[*WorkflowWorkItem]{release: make(chan struct{}), completion: make(chan struct{})}
+	activityWorker := &forceDrainWorker[*ActivityWorkItem]{release: make(chan struct{}), completion: make(chan struct{})}
+	backend := &lifecycleBackend{}
+	taskHub := &taskHubWorker{
+		backend:        backend,
+		workflowWorker: workflowWorker,
+		activityWorker: activityWorker,
+		logger:         DefaultLogger(),
+		started:        true,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	require.ErrorIs(t, taskHub.Shutdown(ctx), context.DeadlineExceeded)
+	require.NoError(t, taskHub.ForceShutdown(context.Background()))
+	require.Equal(t, int32(1), backend.stops.Load())
+	require.True(t, workflowWorker.forceOnce.Load())
+	require.True(t, activityWorker.forceOnce.Load())
 }
 
 func TestTaskHubWorkerRefusesStartUntilTimedOutDrainCompletes(t *testing.T) {
