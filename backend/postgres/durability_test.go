@@ -435,9 +435,46 @@ func newDurabilityBackend(t *testing.T, workflowLease, activityLease time.Durati
 
 func resetDurabilityTables(t *testing.T, ctx context.Context, be *postgresBackend) {
 	t.Helper()
-	_, err := be.db.Exec(ctx, "TRUNCATE TABLE History, NewEvents, NewTasks, Instances RESTART IDENTITY")
+	_, err := be.db.Exec(ctx, "TRUNCATE TABLE ExternalEventDeliveries, History, NewEvents, NewTasks, Instances RESTART IDENTITY")
 	if err != nil {
 		t.Fatalf("reset durability tables: %v", err)
+	}
+}
+
+func TestExternalEventDeliveryMigrationIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	be := newDurabilityBackend(t, time.Second, time.Second)
+	migration, err := os.ReadFile("../../docs/migrations/postgresql/v1.1.0_external_event_deliveries.sql")
+	if err != nil {
+		t.Fatalf("read external delivery migration: %v", err)
+	}
+
+	// CreateTaskHub has applied the latest schema. Remove only the new table to
+	// reproduce the schema state immediately before this v1.1.0 migration.
+	if _, err := be.db.Exec(ctx, "DROP TABLE ExternalEventDeliveries"); err != nil {
+		t.Fatalf("remove pre-v1.1.0 table: %v", err)
+	}
+	t.Cleanup(func() {
+		if be.db != nil {
+			_, _ = be.db.Exec(context.Background(), string(migration))
+		}
+	})
+
+	if _, err := be.db.Exec(ctx, string(migration)); err != nil {
+		t.Fatalf("apply migration: %v", err)
+	}
+	if _, err := be.db.Exec(ctx, string(migration)); err != nil {
+		t.Fatalf("reapply migration: %v", err)
+	}
+	if _, err := be.db.Exec(ctx,
+		"INSERT INTO ExternalEventDeliveries (InstanceID, EventName, DeliveryID) VALUES ($1, $2, $3)",
+		"migration-instance", "order.created", "outbox-42"); err != nil {
+		t.Fatalf("insert delivery receipt: %v", err)
+	}
+	if _, err := be.db.Exec(ctx,
+		"INSERT INTO ExternalEventDeliveries (InstanceID, EventName, DeliveryID) VALUES ($1, $2, $3)",
+		"migration-instance", "order.created", "outbox-42"); err == nil {
+		t.Fatal("migration did not create the delivery deduplication key")
 	}
 }
 

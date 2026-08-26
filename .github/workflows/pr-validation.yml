@@ -15,9 +15,9 @@ on:
 
 env:
   # Configure protoc and go grpc plugin
-  PROTOC_VERSION: "25.x"
-  PROTOC_GEN_GO: "v1.30"
-  PROTOC_GEN_GO_GRPC: "v1.3"
+  PROTOC_VERSION: "35.1"
+  PROTOC_GEN_GO: "v1.36.6"
+  PROTOC_GEN_GO_GRPC: "v1.5.1"
   # The PostgreSQL service is intentionally plaintext. pgx defaults to
   # sslmode=prefer, which needlessly attempts TLS before retrying plaintext.
   PGSSLMODE: disable
@@ -77,6 +77,9 @@ jobs:
 
       - name: Generate grpc code
         run: protoc --go_out=. --go-grpc_out=. -I ./submodules/durabletask-protobuf/protos orchestrator_service.proto
+
+      - name: Verify generated grpc code is committed
+        run: git diff --exit-code -- api/protos/orchestrator_service.pb.go api/protos/orchestrator_service_grpc.pb.go
 
       - name: Run test suite
         env:

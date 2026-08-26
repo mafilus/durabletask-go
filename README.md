@@ -29,6 +29,10 @@ workflow engine must start a new workflow instance when an application wants a
 new execution. See [the v1 migration note](docs/releases/v1.0.0.md) before
 upgrading.
 
+Version `v1.1.0` adds opt-in, durable deduplication for at-least-once external
+events. PostgreSQL operators must apply its schema migration before enabling
+the option; see the [v1.1.0 release note](docs/releases/v1.1.0.md).
+
 ## Security responsibility boundary
 
 Durabletask-go is a neutral workflow engine. Historical signatures, identity
