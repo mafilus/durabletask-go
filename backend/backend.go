@@ -13,13 +13,22 @@ import (
 )
 
 var (
-	ErrTaskHubExists         = errors.New("task hub already exists")
-	ErrTaskHubNotFound       = errors.New("task hub not found")
-	ErrNotInitialized        = errors.New("backend not initialized")
-	ErrWorkItemLockLost      = errors.New("lock on work-item was lost")
-	ErrBackendAlreadyStarted = errors.New("backend is already started")
-	ErrTaskHubStopping       = errors.New("task hub is still stopping")
+	ErrTaskHubExists               = errors.New("task hub already exists")
+	ErrTaskHubNotFound             = errors.New("task hub not found")
+	ErrNotInitialized              = errors.New("backend not initialized")
+	ErrWorkItemLockLost            = errors.New("lock on work-item was lost")
+	ErrBackendAlreadyStarted       = errors.New("backend is already started")
+	ErrTaskHubStopping             = errors.New("task hub is still stopping")
+	ErrExternalDeliveryUnsupported = errors.New("backend does not support external delivery deduplication")
+	ErrEmptyExternalDeliveryID     = errors.New("external delivery ID must be non-empty when provided")
 )
+
+// ExternalEventDeliveryBackend is an optional backend capability for accepting
+// at-least-once external events. A successful duplicate delivery is a no-op.
+// The receipt and event enqueue must be committed atomically.
+type ExternalEventDeliveryBackend interface {
+	AddNewWorkflowEventWithExternalDelivery(context.Context, api.InstanceID, string, string, *HistoryEvent) error
+}
 
 type (
 	HistoryEvent                  = protos.HistoryEvent

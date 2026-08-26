@@ -269,6 +269,11 @@ func (be *postgresBackend) DeleteTaskHub(ctx context.Context) error {
 		be.logger.Error("DeleteTaskHub", "failed to drop NewEvents table", err)
 		return fmt.Errorf("failed to drop NewEvents table: %w", err)
 	}
+	_, err = be.db.Exec(ctx, "DROP TABLE IF EXISTS ExternalEventDeliveries CASCADE")
+	if err != nil {
+		be.logger.Error("DeleteTaskHub", "failed to drop ExternalEventDeliveries table", err)
+		return fmt.Errorf("failed to drop ExternalEventDeliveries table: %w", err)
+	}
 	_, err = be.db.Exec(ctx, "DROP TABLE IF EXISTS NewTasks CASCADE")
 	if err != nil {
 		be.logger.Error("DeleteTaskHub", "failed to drop NewTasks table", err)
@@ -739,6 +744,11 @@ func (be *postgresBackend) cleanupWorkflowStateInternal(ctx context.Context, tx 
 		return fmt.Errorf("failed to delete from NewEvents table: %w", err)
 	}
 
+	_, err = tx.Exec(ctx, "DELETE FROM ExternalEventDeliveries WHERE InstanceID = $1", string(id))
+	if err != nil {
+		return fmt.Errorf("failed to delete from ExternalEventDeliveries table: %w", err)
+	}
+
 	_, err = tx.Exec(ctx, "DELETE FROM NewTasks WHERE InstanceID = $1", string(id))
 	if err != nil {
 		return fmt.Errorf("failed to delete from NewTasks table: %w", err)
@@ -769,6 +779,47 @@ func (be *postgresBackend) AddNewWorkflowEvent(ctx context.Context, iid api.Inst
 		return fmt.Errorf("failed to insert row into NewEvents table: %w", err)
 	}
 
+	return nil
+}
+
+// AddNewWorkflowEventWithExternalDelivery atomically records an external
+// delivery receipt and enqueues its event. A duplicate receipt is success and
+// deliberately does not enqueue another event.
+func (be *postgresBackend) AddNewWorkflowEventWithExternalDelivery(ctx context.Context, iid api.InstanceID, eventName, deliveryID string, e *backend.HistoryEvent) error {
+	if e == nil {
+		return errors.New("HistoryEvent must be non-nil")
+	} else if e.Timestamp == nil {
+		return errors.New("HistoryEvent must have a non-nil timestamp")
+	}
+
+	eventPayload, err := backend.MarshalHistoryEvent(e)
+	if err != nil {
+		return err
+	}
+	tx, err := be.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin external delivery transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	result, err := tx.Exec(ctx,
+		`INSERT INTO ExternalEventDeliveries (InstanceID, EventName, DeliveryID) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+		string(iid), eventName, deliveryID)
+	if err != nil {
+		return fmt.Errorf("failed to record external delivery: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("failed to commit duplicate external delivery: %w", err)
+		}
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO NewEvents (InstanceID, EventPayload) VALUES ($1, $2)`, string(iid), eventPayload); err != nil {
+		return fmt.Errorf("failed to insert row into NewEvents table: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit external delivery transaction: %w", err)
+	}
 	return nil
 }
 

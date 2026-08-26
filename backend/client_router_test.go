@@ -91,6 +91,19 @@ func TestBackendClient_RouterStamping(t *testing.T) {
 		assert.Equal(t, "app2", be.addedEvent.GetRouter().GetTargetAppID())
 	})
 
+	t.Run("raise event rejects an explicitly empty external delivery ID", func(t *testing.T) {
+		be := new(fakeRouterBackend)
+		c := NewTaskHubClient(be)
+		emptyDeliveryID := api.RaiseEventOptions(func(req *protos.RaiseEventRequest) error {
+			empty := ""
+			req.ExternalDeliveryId = &empty
+			return nil
+		})
+		err := c.RaiseEvent(ctx, iid, "ev", emptyDeliveryID)
+		require.ErrorIs(t, err, ErrEmptyExternalDeliveryID)
+		assert.Nil(t, be.addedEvent, "invalid external delivery must not reach the backend")
+	})
+
 	t.Run("suspend", func(t *testing.T) {
 		be := new(fakeRouterBackend)
 		c := NewTaskHubClient(be)

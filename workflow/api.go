@@ -61,6 +61,11 @@ func WithRawEventData(data *wrapperspb.StringValue) RaiseEventOptions {
 	return RaiseEventOptions(api.WithRawEventData(data))
 }
 
+// WithExternalDeliveryID identifies an at-least-once external delivery.
+func WithExternalDeliveryID(deliveryID string) RaiseEventOptions {
+	return RaiseEventOptions(api.WithExternalDeliveryID(deliveryID))
+}
+
 // WithOutput configures an output for the terminated workflow. The specified
 // output must be serializable.
 func WithOutput(data any) TerminateOptions {

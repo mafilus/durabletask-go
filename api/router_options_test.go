@@ -79,6 +79,13 @@ func TestWithAppIDOptions_SetTargetOnRouter(t *testing.T) {
 
 }
 
+func TestWithExternalDeliveryID(t *testing.T) {
+	req := new(protos.RaiseEventRequest)
+	require.NoError(t, WithExternalDeliveryID("outbox-42")(req))
+	assert.Equal(t, "outbox-42", req.GetExternalDeliveryId())
+	assert.Error(t, WithExternalDeliveryID("")(new(protos.RaiseEventRequest)))
+}
+
 func TestValidateTaskRouter(t *testing.T) {
 	assert.NoError(t, ValidateTaskRouter(nil))
 	assert.NoError(t, ValidateTaskRouter(&protos.TaskRouter{}))

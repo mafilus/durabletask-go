@@ -8,8 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mafilus/durabletask-go/api"
 	"github.com/mafilus/durabletask-go/api/protos"
 	"github.com/mafilus/durabletask-go/backend"
+	"github.com/mafilus/durabletask-go/task"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -150,6 +153,79 @@ func TestWorkflowDequeueChecksReturningCursorErrors(t *testing.T) {
 	if strings.Count(workflow, "events.Close()") < 2 || closeIndex < 0 || errIndex < 0 || commitIndex < 0 || closeIndex > errIndex || errIndex > commitIndex {
 		t.Fatal("workflow dequeue must close and check the UPDATE RETURNING cursor before committing")
 	}
+}
+
+func TestAddNewWorkflowEventWithExternalDeliveryDeduplicates(t *testing.T) {
+	ctx := context.Background()
+	be := newRegressionBackend(t, time.Second, time.Second)
+	event := &protos.HistoryEvent{EventId: -1, Timestamp: timestamppb.Now()}
+
+	if err := be.AddNewWorkflowEventWithExternalDelivery(ctx, "instance-1", "order.created", "outbox-42", event); err != nil {
+		t.Fatalf("first delivery: %v", err)
+	}
+	if err := be.AddNewWorkflowEventWithExternalDelivery(ctx, "instance-1", "order.created", "outbox-42", event); err != nil {
+		t.Fatalf("duplicate delivery: %v", err)
+	}
+
+	var queued, deliveries int
+	if err := be.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM NewEvents WHERE InstanceID = ?", "instance-1").Scan(&queued); err != nil {
+		t.Fatalf("count queued events: %v", err)
+	}
+	if err := be.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM ExternalEventDeliveries WHERE InstanceID = ? AND EventName = ? AND DeliveryID = ?", "instance-1", "order.created", "outbox-42").Scan(&deliveries); err != nil {
+		t.Fatalf("count delivery receipts: %v", err)
+	}
+	if queued != 1 {
+		t.Fatalf("queued events=%d, want 1 after duplicate delivery", queued)
+	}
+	if deliveries != 1 {
+		t.Fatalf("delivery receipts=%d, want 1", deliveries)
+	}
+}
+
+func TestRaiseEventWithExternalDeliveryIDRedeliveryDoesNotDuplicateHistory(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	registry := task.NewTaskRegistry()
+	registry.AddWorkflowN("ExternalDeliveryWorkflow", func(ctx *task.WorkflowContext) (any, error) {
+		var payload string
+		if err := ctx.WaitForSingleEvent("order.created", time.Second).Await(&payload); err != nil {
+			return nil, err
+		}
+		return payload, nil
+	})
+
+	logger := backend.DefaultLogger()
+	be := NewSqliteBackend(NewSqliteOptions(""), logger)
+	executor := task.NewTaskExecutor(registry)
+	workflowWorker := backend.NewWorkflowWorker(backend.WorkflowWorkerOptions{Backend: be, Executor: executor, Logger: logger})
+	activityWorker := backend.NewActivityTaskWorker(be, executor, logger)
+	hub := backend.NewTaskHubWorker(be, workflowWorker, activityWorker, logger)
+	require.NoError(t, hub.Start(ctx))
+	defer func() { require.NoError(t, hub.Shutdown(context.Background())) }()
+
+	client := backend.NewTaskHubClient(be)
+	id, err := client.ScheduleNewWorkflow(ctx, "ExternalDeliveryWorkflow")
+	require.NoError(t, err)
+	require.NoError(t, client.RaiseEvent(ctx, id, "order.created",
+		api.WithEventPayload("first"), api.WithExternalDeliveryID("outbox-42")))
+	_, err = client.WaitForWorkflowCompletion(ctx, id)
+	require.NoError(t, err)
+
+	// This models retry after RaiseEvent committed but before the publisher
+	// marked its outbox row published.
+	require.NoError(t, client.RaiseEvent(ctx, id, "order.created",
+		api.WithEventPayload("redelivery"), api.WithExternalDeliveryID("outbox-42")))
+
+	history, err := be.GetInstanceHistory(ctx, &protos.GetInstanceHistoryRequest{InstanceId: id.String()})
+	require.NoError(t, err)
+	var raised int
+	for _, event := range history.Events {
+		if raisedEvent := event.GetEventRaised(); raisedEvent != nil && raisedEvent.GetName() == "order.created" {
+			raised++
+		}
+	}
+	require.Equal(t, 1, raised, "duplicate delivery must not append a second EventRaised history event")
 }
 
 func functionRegion(t *testing.T, source, startMarker, endMarker string) string {

@@ -45,6 +45,14 @@ CREATE TABLE IF NOT EXISTS NewEvents (
     UNIQUE (InstanceID, SequenceNumber)
 );
 
+CREATE TABLE IF NOT EXISTS ExternalEventDeliveries (
+    InstanceID TEXT NOT NULL,
+    EventName TEXT NOT NULL,
+    DeliveryID TEXT NOT NULL,
+
+    PRIMARY KEY (InstanceID, EventName, DeliveryID)
+);
+
 CREATE TABLE IF NOT EXISTS NewTasks (
     SequenceNumber SERIAL PRIMARY KEY,  -- order is important for FIFO
     InstanceID TEXT NOT NULL,

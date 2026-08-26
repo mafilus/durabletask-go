@@ -527,7 +527,19 @@ func (g *grpcExecutor) RaiseEvent(ctx context.Context, req *protos.RaiseEventReq
 		},
 		Router: req.GetRouter(),
 	}
-	if err := g.backend.AddNewWorkflowEvent(ctx, api.InstanceID(req.InstanceId), e); err != nil {
+	if req.ExternalDeliveryId != nil {
+		deliveryID := *req.ExternalDeliveryId
+		if deliveryID == "" {
+			return nil, ErrEmptyExternalDeliveryID
+		}
+		deliveryBackend, ok := g.backend.(ExternalEventDeliveryBackend)
+		if !ok {
+			return nil, ErrExternalDeliveryUnsupported
+		}
+		if err := deliveryBackend.AddNewWorkflowEventWithExternalDelivery(ctx, api.InstanceID(req.InstanceId), req.Name, deliveryID, e); err != nil {
+			return nil, err
+		}
+	} else if err := g.backend.AddNewWorkflowEvent(ctx, api.InstanceID(req.InstanceId), e); err != nil {
 		return nil, err
 	}
 

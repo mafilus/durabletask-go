@@ -57,6 +57,17 @@ func TestGrpcExecutorRemovesPendingActivityWhenDispatchIsCanceled(t *testing.T) 
 	require.False(t, ok)
 }
 
+func TestGrpcExecutorRaiseEventRejectsExplicitlyEmptyExternalDeliveryID(t *testing.T) {
+	executor := newRegressionExecutor()
+	empty := ""
+	_, err := executor.RaiseEvent(context.Background(), &protos.RaiseEventRequest{
+		InstanceId:         "workflow",
+		Name:               "event",
+		ExternalDeliveryId: &empty,
+	})
+	require.ErrorIs(t, err, ErrEmptyExternalDeliveryID)
+}
+
 type closedQueueStream struct {
 	grpc.ServerStream
 	ctx context.Context

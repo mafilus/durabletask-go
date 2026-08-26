@@ -205,6 +205,20 @@ func (c *backendClient) RaiseEvent(ctx context.Context, id api.InstanceID, event
 		},
 		Router: req.GetRouter(),
 	}
+	if req.ExternalDeliveryId != nil {
+		deliveryID := *req.ExternalDeliveryId
+		if deliveryID == "" {
+			return fmt.Errorf("failed to raise event: %w", ErrEmptyExternalDeliveryID)
+		}
+		deliveryBackend, ok := c.be.(ExternalEventDeliveryBackend)
+		if !ok {
+			return fmt.Errorf("failed to raise event: %w", ErrExternalDeliveryUnsupported)
+		}
+		if err := deliveryBackend.AddNewWorkflowEventWithExternalDelivery(ctx, id, req.Name, deliveryID, e); err != nil {
+			return fmt.Errorf("failed to raise event: %w", err)
+		}
+		return nil
+	}
 	if err := c.be.AddNewWorkflowEvent(ctx, id, e); err != nil {
 		return fmt.Errorf("failed to raise event: %w", err)
 	}

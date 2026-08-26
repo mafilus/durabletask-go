@@ -139,6 +139,19 @@ func WithRawEventData(data *wrapperspb.StringValue) RaiseEventOptions {
 	}
 }
 
+// WithExternalDeliveryID identifies an at-least-once external delivery.
+// Repeating the same non-empty ID for the same instance and event name is a
+// successful no-op: it does not append another event to the durable history.
+func WithExternalDeliveryID(deliveryID string) RaiseEventOptions {
+	return func(req *protos.RaiseEventRequest) error {
+		if deliveryID == "" {
+			return errors.New("external delivery ID must be non-empty")
+		}
+		req.ExternalDeliveryId = &deliveryID
+		return nil
+	}
+}
+
 // WithOutput configures an output for the terminated workflow. The specified output must be serializable.
 func WithOutput(data any) TerminateOptions {
 	return func(req *protos.TerminateRequest) error {

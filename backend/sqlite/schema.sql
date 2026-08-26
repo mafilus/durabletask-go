@@ -43,6 +43,14 @@ CREATE TABLE IF NOT EXISTS NewEvents (
     CONSTRAINT UX_NewEvents UNIQUE (InstanceID, SequenceNumber)
 );
 
+CREATE TABLE IF NOT EXISTS ExternalEventDeliveries (
+    [InstanceID] TEXT NOT NULL,
+    [EventName] TEXT NOT NULL,
+    [DeliveryID] TEXT NOT NULL,
+
+    CONSTRAINT PK_ExternalEventDeliveries PRIMARY KEY (InstanceID, EventName, DeliveryID)
+);
+
 CREATE TABLE IF NOT EXISTS NewTasks (
     [SequenceNumber] INTEGER PRIMARY KEY,  -- order is important for FIFO
     [InstanceID] TEXT NOT NULL,

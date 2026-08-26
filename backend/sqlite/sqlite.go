@@ -589,6 +589,11 @@ func (be *sqliteBackend) cleanupWorkflowStateInternal(ctx context.Context, tx *s
 		return fmt.Errorf("failed to delete from NewEvents table: %w", err)
 	}
 
+	_, err = tx.ExecContext(ctx, "DELETE FROM ExternalEventDeliveries WHERE [InstanceID] = ?", string(id))
+	if err != nil {
+		return fmt.Errorf("failed to delete from ExternalEventDeliveries table: %w", err)
+	}
+
 	_, err = tx.ExecContext(ctx, "DELETE FROM NewTasks WHERE [InstanceID] = ?", string(id))
 	if err != nil {
 		return fmt.Errorf("failed to delete from NewTasks table: %w", err)
@@ -619,6 +624,48 @@ func (be *sqliteBackend) AddNewWorkflowEvent(ctx context.Context, iid api.Instan
 		return fmt.Errorf("failed to insert row into [NewEvents] table: %w", err)
 	}
 
+	return nil
+}
+
+// AddNewWorkflowEventWithExternalDelivery atomically records an external
+// delivery receipt and enqueues its event. A duplicate receipt is success and
+// deliberately does not enqueue another event.
+func (be *sqliteBackend) AddNewWorkflowEventWithExternalDelivery(ctx context.Context, iid api.InstanceID, eventName, deliveryID string, e *backend.HistoryEvent) error {
+	if e == nil {
+		return errors.New("HistoryEvent must be non-nil")
+	} else if e.Timestamp == nil {
+		return errors.New("HistoryEvent must have a non-nil timestamp")
+	}
+
+	eventPayload, err := backend.MarshalHistoryEvent(e)
+	if err != nil {
+		return err
+	}
+	tx, err := be.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin external delivery transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(ctx,
+		`INSERT INTO ExternalEventDeliveries ([InstanceID], [EventName], [DeliveryID]) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
+		string(iid), eventName, deliveryID)
+	if err != nil {
+		return fmt.Errorf("failed to record external delivery: %w", err)
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to inspect external delivery receipt: %w", err)
+	}
+	if inserted == 0 {
+		return tx.Commit()
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO NewEvents ([InstanceID], [EventPayload]) VALUES (?, ?)`, string(iid), eventPayload); err != nil {
+		return fmt.Errorf("failed to insert row into [NewEvents] table: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit external delivery transaction: %w", err)
+	}
 	return nil
 }
 
