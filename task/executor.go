@@ -84,6 +84,7 @@ func (te *taskExecutor) ExecuteActivity(ctx context.Context, id api.InstanceID, 
 				EventType: &protos.HistoryEvent_TaskFailed{
 					TaskFailed: &protos.TaskFailedEvent{
 						TaskScheduledId: e.EventId,
+						TaskExecutionId: ts.GetTaskExecutionId(),
 						FailureDetails: &protos.TaskFailureDetails{
 							ErrorType:    "TaskActivityPanic",
 							ErrorMessage: fmt.Sprintf("panic: %v", panicVal),

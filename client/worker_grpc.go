@@ -51,6 +51,10 @@ func (c *TaskHubGrpcClient) startKeepaliveLoop(ctx context.Context) context.Canc
 }
 
 func (c *TaskHubGrpcClient) StartWorkItemListener(ctx context.Context, r *task.TaskRegistry) error {
+	// Own all listener resources independently of the caller's potentially
+	// long-lived context. Failed startup and terminal receive errors must also
+	// stop the cache janitor, active stream, and work-item contexts.
+	ctx, cancelListener := context.WithCancel(ctx)
 	executor := task.NewTaskExecutor(r)
 
 	var stream workItemsStream
@@ -105,6 +109,7 @@ func (c *TaskHubGrpcClient) StartWorkItemListener(ctx context.Context, r *task.T
 	c.logger.Infof("connecting work item listener stream")
 	err := initStream()
 	if err != nil {
+		cancelListener()
 		return err
 	}
 
@@ -112,6 +117,7 @@ func (c *TaskHubGrpcClient) StartWorkItemListener(ctx context.Context, r *task.T
 		c.logger.Info("starting background processor")
 		cancelKeepalive := c.startKeepaliveLoop(ctx)
 		defer func() {
+			cancelListener()
 			cancelKeepalive()
 			c.logger.Info("stopping background processor")
 			// We must use a background context here as the stream's context is likely canceled
