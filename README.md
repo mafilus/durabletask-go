@@ -16,6 +16,18 @@ The Durable Task Framework is a lightweight, embeddable engine for writing durab
 
 The project originated as a Go clone of the [.NET-based Durable Task Framework](https://github.com/Azure/durabletask). It also takes inspiration from the [Go Workflows](https://github.com/cschleiden/go-workflows) project and [Temporal](https://temporal.io/). This fork is designed to be embedded in Go-based processes and sidecar-style deployments; it does not follow the product roadmap or contribution processes of its upstream projects.
 
+## Current release
+
+The current stable release is [v1.2.0](https://github.com/mafilus/durabletask-go/releases/tag/v1.2.0).
+It requires Go 1.26.6 or newer, as declared in [go.mod](go.mod).
+
+```bash
+go get github.com/mafilus/durabletask-go@v1.2.0
+```
+
+See the [release note](docs/releases/v1.2.0.md) for upgrade instructions and
+validation evidence, including the separately triggered PostgreSQL chaos run.
+
 ## Compatibility posture
 
 The public contract of this fork is defined by its own Go module and release

@@ -1,6 +1,6 @@
 # Worker transport reliability
 
-This maintenance series ports the early-resolution, completion-token, and
+Version v1.2.0 ports the early-resolution, completion-token, and
 stream-recovery fixes from Dapr onto the synchronous mafilus executor. The
 public Backend and Executor interfaces remain synchronous and unchanged.
 
@@ -83,3 +83,8 @@ responses, cancellation, stream ownership, and concurrent shutdown. Race checks
 are needed for registry and completion transitions. Durable recovery additionally
 requires observing backend abandonment, a new acquisition, rejection of the old
 token, and successful completion of the new attempt through a real backend.
+
+The [v1.2.0 release note](releases/v1.2.0.md) records the completed local and CI
+checks. PostgreSQL restart-boundary chaos passed separately in CI on the exact
+release commit; this does not establish deployment-level network partition
+recovery or exactly-once external activity effects.

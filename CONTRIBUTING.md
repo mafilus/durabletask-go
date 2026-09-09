@@ -26,7 +26,9 @@ intentionally changing the pinned submodule commit.
 
 ## Building the project
 
-This project requires go v1.19.x or greater. You can build a standalone executable by simply running `go build` at the project root.
+Version v1.2.0 requires Go 1.26.6 or newer. The authoritative minimum is declared
+in `go.mod`, which CI also uses to select Go. You can build a standalone
+executable by running `go build` at the project root.
 
 ### Generating protobuf
 
@@ -72,13 +74,32 @@ mockery --dir ./backend --name="^Backend|^Executor|^TaskWorker" --output ./tests
 
 ## Running tests
 
-All automated tests are under `./tests`. A separate test package hierarchy was chosen intentionally to prioritize [black box testing](https://en.wikipedia.org/wiki/Black-box_testing). This strategy also makes it easier to catch accidental breaking API changes.
-
-Run tests with the following command.
+Tests live both alongside their packages and under `./tests`, including the
+SQLite/gRPC recovery tests in `./tests/transport`. Run the complete default suite
+from the repository root:
 
 ```bash
-go test ./tests/... -coverpkg ./api,./task,./client,./backend/...,./api/helpers
+go test -count=1 -timeout=3m ./...
+go vet ./...
 ```
+
+PostgreSQL tests that require a database are skipped unless enabled; see the
+[backend test setup](backend/postgres/README.md). `PR Validation` provisions
+PostgreSQL and runs the default suite with `POSTGRES_ENABLED=true`.
+
+Build-tagged integration tests are separate from the default suite:
+
+- `OpenTelemetry Collector integration` runs the collector integration test.
+- `PostgreSQL chaos integration` is manual (`workflow_dispatch`). Select the
+  branch or tag to validate in GitHub Actions. It provisions an isolated Docker
+  PostgreSQL instance, runs the five restart-boundary scenarios with
+  `-tags 'integration postgreschaos'`, collects diagnostics, and removes the
+  instance. Never point these restart tests at a production database.
+- `PostgreSQL durability lab` is a separate manual workflow with selectable
+  durability and stress suites.
+
+A green default CI run does not imply that either manual workflow ran. Record
+the exact commit and run link when reporting chaos or durability results.
 
 ## Publishing a release
 
