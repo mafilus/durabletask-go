@@ -79,3 +79,20 @@ Run tests with the following command.
 ```bash
 go test ./tests/... -coverpkg ./api,./task,./client,./backend/...,./api/helpers
 ```
+
+## Publishing a release
+
+Validate the intended runtime commit and prepare `docs/releases/vX.Y.Z.md` with
+a matching `# vX.Y.Z:` title, without an `unreleased` marker. Use absolute links
+in this note so they also work on the GitHub release page. Release preparation
+must not introduce unvalidated runtime changes.
+
+Push an annotated, stable-version tag only after verifying its exact commit.
+The `Publish release` workflow checks out that tag and publishes its committed
+notes through GitHub's built-in token. It requires no personal access token.
+It verifies that the tag exists and does not overwrite an existing release.
+When publishing multiple versions, publish and verify them in ascending order:
+each new publication becomes the latest release.
+
+Verify the workflow result, the published release, and the remote peeled tag
+OID. Tags and release publication do not substitute for runtime test results.

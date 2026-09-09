@@ -33,6 +33,15 @@ Version `v1.1.0` adds opt-in, durable deduplication for at-least-once external
 events. PostgreSQL operators must apply its schema migration before enabling
 the option; see the [v1.1.0 release note](docs/releases/v1.1.0.md).
 
+Version `v1.1.1` fixes workflow termination and execution identity without an
+API or schema change; see the [maintenance release note](docs/releases/v1.1.1.md).
+
+Version `v1.2.0` adds early-resolution handling and worker transport recovery.
+Upgrade workers before enabling `backend.WithRequireCompletionTokens()` on the
+server: legacy responses without a token remain accepted by default. See the
+[v1.2.0 release note](docs/releases/v1.2.0.md) for the compatibility and proof
+boundaries.
+
 ## Security responsibility boundary
 
 Durabletask-go is a neutral workflow engine. Historical signatures, identity
