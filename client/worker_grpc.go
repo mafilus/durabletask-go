@@ -184,9 +184,9 @@ func (c *TaskHubGrpcClient) StartWorkItemListener(ctx context.Context, r *task.T
 				// Capture this stream's cancel so the handler tears down the
 				// stream it arrived on, not a later reconnected one.
 				teardownStream := streamCancel
-				go c.processWorkflowWorkItem(ctx, executor, historyCache, orchReq, teardownStream)
+				go c.processWorkflowWorkItem(ctx, executor, historyCache, orchReq, teardownStream, workItem.GetCompletionToken())
 			} else if actReq := workItem.GetActivityRequest(); actReq != nil {
-				go c.processActivityWorkItem(ctx, executor, actReq)
+				go c.processActivityWorkItem(ctx, executor, actReq, workItem.GetCompletionToken())
 			} else {
 				c.logger.Warnf("received unknown work item type: %v", workItem)
 			}
@@ -201,6 +201,7 @@ func (c *TaskHubGrpcClient) processWorkflowWorkItem(
 	historyCache *workflowHistoryCache,
 	workItem *protos.WorkflowRequest,
 	teardownStream context.CancelFunc,
+	completionToken string,
 ) {
 	iid := api.InstanceID(workItem.InstanceId)
 
@@ -242,7 +243,7 @@ func (c *TaskHubGrpcClient) processWorkflowWorkItem(
 		}
 	}
 
-	resp := protos.WorkflowResponse{InstanceId: workItem.InstanceId}
+	resp := protos.WorkflowResponse{InstanceId: workItem.InstanceId, CompletionToken: completionToken}
 	if err != nil {
 		// NOTE: At the time of writing, there's no known case where this error is returned.
 		//       We add error handling here anyways, just in case.
@@ -280,6 +281,7 @@ func (c *TaskHubGrpcClient) processActivityWorkItem(
 	ctx context.Context,
 	executor backend.Executor,
 	req *protos.ActivityRequest,
+	completionToken string,
 ) {
 	opts := backend.ExecuteOptions{
 		PropagatedHistory: req.GetPropagatedHistory(),
@@ -305,7 +307,7 @@ func (c *TaskHubGrpcClient) processActivityWorkItem(
 	}
 	result, err := executor.ExecuteActivity(ctx, api.InstanceID(req.WorkflowInstance.InstanceId), event, opts)
 
-	resp := protos.ActivityResponse{InstanceId: req.WorkflowInstance.InstanceId, TaskId: req.TaskId}
+	resp := protos.ActivityResponse{InstanceId: req.WorkflowInstance.InstanceId, TaskId: req.TaskId, CompletionToken: completionToken}
 	if err != nil {
 		resp.FailureDetails = &protos.TaskFailureDetails{
 			ErrorType:    fmt.Sprintf("%T", err),

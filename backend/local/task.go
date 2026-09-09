@@ -55,6 +55,9 @@ func (be *TasksBackend) WaitForActivityCompletion(request *protos.ActivityReques
 	be.pendingActivities.Store(key, pending)
 
 	return func(ctx context.Context) (*protos.ActivityResponse, error) {
+		// A canceled waiter must only remove its own attempt. Another attempt
+		// with the same logical task key may already have replaced it.
+		defer be.pendingActivities.CompareAndDelete(key, pending)
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -89,6 +92,7 @@ func (be *TasksBackend) WaitForWorkflowTaskCompletion(request *protos.WorkflowRe
 	be.pendingWorkflows.Store(request.GetInstanceId(), pending)
 
 	return func(ctx context.Context) (*protos.WorkflowResponse, error) {
+		defer be.pendingWorkflows.CompareAndDelete(request.GetInstanceId(), pending)
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
