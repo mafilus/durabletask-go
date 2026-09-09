@@ -62,7 +62,7 @@ func (c *TaskHubGrpcClient) resolveWorkflowHistory(
 	iid := api.InstanceID(workItem.InstanceId)
 	delta := workItem.GetPastEvents()
 
-	if cached, ok := historyCache.get(iid); ok && len(cached) == int(cachedHistory.GetEventCount()) {
+	if cached, ok := historyCache.getForExecution(iid, workItem.GetExecutionId().GetValue()); ok && workItem.GetExecutionId().GetValue() != "" && len(cached) == int(cachedHistory.GetEventCount()) {
 		full := make([]*protos.HistoryEvent, 0, len(cached)+len(delta))
 		full = append(full, cached...)
 		full = append(full, delta...)
@@ -95,9 +95,10 @@ func workflowHistoryReset(resp *protos.WorkflowResponse) bool {
 }
 
 type cachedWorkflowHistory struct {
-	events     []*protos.HistoryEvent
-	lastAccess time.Time
-	bytes      int64
+	executionID string
+	events      []*protos.HistoryEvent
+	lastAccess  time.Time
+	bytes       int64
 }
 
 // historyBytes returns the serialized size of a history, used as a proxy for its
@@ -154,10 +155,14 @@ func newWorkflowHistoryCache(cfg workflowHistoryCacheConfig) *workflowHistoryCac
 }
 
 func (h *workflowHistoryCache) get(iid api.InstanceID) ([]*protos.HistoryEvent, bool) {
+	return h.getForExecution(iid, "")
+}
+
+func (h *workflowHistoryCache) getForExecution(iid api.InstanceID, executionID string) ([]*protos.HistoryEvent, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	e, ok := h.entries[iid]
-	if !ok {
+	if !ok || e.executionID != executionID {
 		return nil, false
 	}
 	e.lastAccess = h.now()
@@ -165,6 +170,10 @@ func (h *workflowHistoryCache) get(iid api.InstanceID) ([]*protos.HistoryEvent, 
 }
 
 func (h *workflowHistoryCache) put(iid api.InstanceID, events []*protos.HistoryEvent) {
+	h.putForExecution(iid, "", events)
+}
+
+func (h *workflowHistoryCache) putForExecution(iid api.InstanceID, executionID string, events []*protos.HistoryEvent) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -179,7 +188,7 @@ func (h *workflowHistoryCache) put(iid api.InstanceID, events []*protos.HistoryE
 	if old, ok := h.entries[iid]; ok {
 		h.totalBytes -= old.bytes
 	}
-	h.entries[iid] = &cachedWorkflowHistory{events: events, lastAccess: h.now(), bytes: size}
+	h.entries[iid] = &cachedWorkflowHistory{executionID: executionID, events: events, lastAccess: h.now(), bytes: size}
 	h.totalBytes += size
 	h.evictToFit(iid)
 }

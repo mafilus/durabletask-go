@@ -403,6 +403,7 @@ func TestDurableTimerSurvivesBackendRestart(t *testing.T) {
 
 func newDurabilityBackend(t *testing.T, workflowLease, activityLease time.Duration) *postgresBackend {
 	t.Helper()
+	requirePostgresTests(t)
 
 	host := getenv("PGHOST", "127.0.0.1")
 	portText := getenv("PGPORT", "5432")
@@ -431,6 +432,15 @@ func newDurabilityBackend(t *testing.T, workflowLease, activityLease time.Durati
 		}
 	})
 	return be
+}
+
+// All integration helpers must pass this gate before opening a connection.
+// The selected database is disposable: these tests truncate tables and test DDL.
+func requirePostgresTests(t *testing.T) {
+	t.Helper()
+	if os.Getenv("POSTGRES_ENABLED") != "true" {
+		t.Skip("destructive PostgreSQL tests disabled; set POSTGRES_ENABLED=true with an isolated test database")
+	}
 }
 
 func resetDurabilityTables(t *testing.T, ctx context.Context, be *postgresBackend) {

@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	"github.com/mafilus/durabletask-go/api"
 	"github.com/mafilus/durabletask-go/api/protos"
@@ -53,12 +54,13 @@ func TestResolveWorkflowHistory_FullSend(t *testing.T) {
 func TestResolveWorkflowHistory_CacheHitReconstructs(t *testing.T) {
 	c := &TaskHubGrpcClient{}
 	cache := newWorkflowHistoryCache(workflowHistoryCacheConfig{})
-	cache.put("a", histEvents(5))
+	cache.putForExecution("a", "generation-1", histEvents(5))
 
 	// Delta send: worker is told it already holds 5 events; here is the 3-event delta.
 	req := &protos.WorkflowRequest{
 		InstanceId:    "a",
 		CachedHistory: &protos.CachedHistory{EventCount: 5},
+		ExecutionId:   wrapperspb.String("generation-1"),
 		PastEvents:    histEvents(3),
 		NewEvents:     histEvents(1),
 	}
@@ -108,10 +110,11 @@ func TestResolveWorkflowHistory_LengthMismatchIsMiss(t *testing.T) {
 	stub := &fakeSidecarClient{events: histEvents(9)}
 	c := &TaskHubGrpcClient{client: stub}
 	cache := newWorkflowHistoryCache(workflowHistoryCacheConfig{})
-	cache.put("a", histEvents(4))
+	cache.putForExecution("a", "generation-1", histEvents(4))
 
 	req := &protos.WorkflowRequest{
 		InstanceId:    "a",
+		ExecutionId:   wrapperspb.String("generation-1"),
 		CachedHistory: &protos.CachedHistory{EventCount: 5},
 		PastEvents:    histEvents(3),
 	}
@@ -120,6 +123,22 @@ func TestResolveWorkflowHistory_LengthMismatchIsMiss(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, stub.calls, "a count mismatch must route to GetInstanceHistory")
 	assert.Len(t, got, 9, "must use the fetched history, not reconstruct 4+3 from the stale cache")
+}
+
+func TestResolveWorkflowHistoryGenerationMismatchIsMiss(t *testing.T) {
+	for _, executionID := range []string{"generation-2", ""} {
+		t.Run("execution="+executionID, func(t *testing.T) {
+			stub := &fakeSidecarClient{events: histEvents(8)}
+			c := &TaskHubGrpcClient{client: stub}
+			cache := newWorkflowHistoryCache(workflowHistoryCacheConfig{})
+			cache.putForExecution("a", "generation-1", histEvents(5))
+			req := &protos.WorkflowRequest{InstanceId: "a", ExecutionId: wrapperspb.String(executionID), CachedHistory: &protos.CachedHistory{EventCount: 5}, PastEvents: histEvents(3)}
+			got, err := c.resolveWorkflowHistory(context.Background(), cache, req)
+			require.NoError(t, err)
+			require.Equal(t, 1, stub.calls)
+			require.Equal(t, stub.events, got)
+		})
+	}
 }
 
 func TestWorkflowHistoryReset(t *testing.T) {

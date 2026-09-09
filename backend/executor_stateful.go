@@ -35,6 +35,9 @@ type streamState struct {
 	// pastEvents prefix that may be omitted on the next turn. Only accessed from
 	// the owning stream's GetWorkItems dispatch loop, so it needs no locking.
 	warm map[api.InstanceID]int
+	// A prefix is usable only in the same known execution. Another stream can
+	// process ContinueAsNew and grow the new history beyond this stream's count.
+	warmExecution map[api.InstanceID]string
 
 	// maxWarm is the soft cap on warm entries; defaults to maxWarmInstancesPerStream.
 	maxWarm int
@@ -42,10 +45,11 @@ type streamState struct {
 
 func newStreamState(id string, req *protos.GetWorkItemsRequest) *streamState {
 	s := &streamState{
-		id:      id,
-		ch:      make(chan *protos.WorkItem),
-		warm:    make(map[api.InstanceID]int),
-		maxWarm: maxWarmInstancesPerStream,
+		id:            id,
+		ch:            make(chan *protos.WorkItem),
+		warm:          make(map[api.InstanceID]int),
+		warmExecution: make(map[api.InstanceID]string),
+		maxWarm:       maxWarmInstancesPerStream,
 	}
 	for _, c := range req.GetCapabilities() {
 		if c == protos.WorkerCapability_WORKER_CAPABILITY_STATEFUL_HISTORY {
@@ -140,6 +144,7 @@ func (s *streamState) applyStatefulHistory(req *protos.WorkflowRequest) {
 
 	iid := api.InstanceID(req.GetInstanceId())
 	pastLen := len(req.GetPastEvents())
+	executionID := req.GetExecutionId().GetValue()
 
 	// n = committed events the worker is believed to already hold. Send a delta
 	// whenever that prefix is non-empty and not longer than the current history
@@ -147,7 +152,7 @@ func (s *streamState) applyStatefulHistory(req *protos.WorkflowRequest) {
 	// continue-as-new) falls back to a full send. n == pastLen is allowed and means
 	// the worker already holds the whole committed history, so the delta is empty
 	// and only NewEvents are sent.
-	if n, ok := s.warm[iid]; ok && n > 0 && n <= pastLen {
+	if n, ok := s.warm[iid]; ok && executionID != "" && s.warmExecution[iid] == executionID && n > 0 && n <= pastLen {
 		req.PastEvents = req.GetPastEvents()[n:]
 		req.CachedHistory = &protos.CachedHistory{EventCount: int32(n)}
 	}
@@ -156,6 +161,7 @@ func (s *streamState) applyStatefulHistory(req *protos.WorkflowRequest) {
 	// the prefix and is receiving the delta, or is receiving everything). Record
 	// that length for the next turn's delta computation.
 	s.warm[iid] = pastLen
+	s.warmExecution[iid] = executionID
 
 	// Completed instances are never re-dispatched, so their warm entries are
 	// never naturally evicted. Bound the map: dropping an entry only forces a
@@ -166,6 +172,7 @@ func (s *streamState) applyStatefulHistory(req *protos.WorkflowRequest) {
 				continue
 			}
 			delete(s.warm, k)
+			delete(s.warmExecution, k)
 			if len(s.warm) <= s.maxWarm {
 				break
 			}

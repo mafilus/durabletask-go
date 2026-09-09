@@ -802,7 +802,7 @@ func (ctx *WorkflowContext) onTaskScheduled(taskID int32, ts *protos.TaskSchedul
 	if !ok || a.GetScheduleTask() == nil {
 		// Tolerate histories from before WaitForExternalEvent started emitting
 		// a synthetic timer for negative timeouts.
-		if ctx.dropOptionalExternalEventTimerAt(taskID) {
+		for ctx.dropOptionalExternalEventTimerAt(taskID) {
 			a, ok = ctx.pendingActions[taskID]
 		}
 	}
@@ -971,7 +971,7 @@ func (ctx *WorkflowContext) onTaskFailed(tf *protos.TaskFailedEvent) error {
 func (ctx *WorkflowContext) onChildWorkflowScheduled(taskID int32, ts *protos.ChildWorkflowInstanceCreatedEvent) error {
 	a, ok := ctx.pendingActions[taskID]
 	if !ok || a.GetCreateChildWorkflow() == nil {
-		if ctx.dropOptionalExternalEventTimerAt(taskID) {
+		for ctx.dropOptionalExternalEventTimerAt(taskID) {
 			a, ok = ctx.pendingActions[taskID]
 		}
 	}
@@ -1028,9 +1028,9 @@ func (ctx *WorkflowContext) onTimerCreated(e *protos.HistoryEvent) error {
 	// timer but the incoming TimerCreated event is something else (e.g. a
 	// real CreateTimer-origin timer emitted by pre-patch code), drop the
 	// optional timer and shift later pending ids down so we match correctly.
-	if a, ok := ctx.pendingActions[e.EventId]; ok &&
+	for a, ok := ctx.pendingActions[e.EventId]; ok &&
 		isOptionalExternalEventTimerAction(a) &&
-		!isOptionalExternalEventTimerCreatedEvent(tc) {
+		!isOptionalExternalEventTimerCreatedEvent(tc); a, ok = ctx.pendingActions[e.EventId] {
 		ctx.dropOptionalExternalEventTimerAt(e.EventId)
 	}
 	if a, ok := ctx.pendingActions[e.EventId]; !ok || a.GetCreateTimer() == nil {

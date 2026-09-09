@@ -265,6 +265,7 @@ func TestIntegrationPostgresRestartAfterWorkflowCommitBeforeAcknowledgement(t *t
 
 func requirePostgresChaos(t *testing.T) {
 	t.Helper()
+	requirePostgresTests(t)
 	if os.Getenv("STRIX_TEST_POSTGRES_CHAOS") != "1" {
 		t.Skip("PostgreSQL chaos integration; set STRIX_TEST_POSTGRES_CHAOS=1")
 	}

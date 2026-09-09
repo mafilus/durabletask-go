@@ -28,6 +28,7 @@ permissions:
   contents: read
 
 env:
+  POSTGRES_ENABLED: "true"
   PGHOST: 127.0.0.1
   PGPORT: "5432"
   PGUSER: postgres

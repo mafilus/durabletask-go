@@ -15,6 +15,7 @@ env:
   # The isolated Docker PostgreSQL instance is plaintext-only.
   PGSSLMODE: disable
   STRIX_TEST_POSTGRES_CHAOS: "1"
+  POSTGRES_ENABLED: "true"
   STRIX_POSTGRES_CHAOS_COMPOSE_FILE: ${{ github.workspace }}/.github/postgres-chaos.compose.yml
   STRIX_POSTGRES_CHAOS_PROJECT: durabletask-chaos
 

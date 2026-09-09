@@ -471,7 +471,7 @@ func (be *postgresBackend) CompleteWorkflowWorkItem(ctx context.Context, wi *bac
 		builder := strings.Builder{}
 		builder.WriteString("INSERT INTO NewTasks (InstanceID, EventPayload) VALUES ")
 		for i := 0; i < newActivityCount; i++ {
-			builder.WriteString(fmt.Sprintf("($%d, $%d)", 3*i+1, 3*i+2))
+			builder.WriteString(fmt.Sprintf("($%d, $%d)", 2*i+1, 2*i+2))
 			if i < newActivityCount-1 {
 				builder.WriteString(", ")
 			}

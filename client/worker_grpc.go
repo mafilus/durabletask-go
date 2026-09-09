@@ -239,7 +239,7 @@ func (c *TaskHubGrpcClient) processWorkflowWorkItem(
 		if workflowHistoryReset(results) {
 			historyCache.delete(iid)
 		} else {
-			historyCache.put(iid, pastEvents)
+			historyCache.putForExecution(iid, workItem.GetExecutionId().GetValue(), pastEvents)
 		}
 	}
 

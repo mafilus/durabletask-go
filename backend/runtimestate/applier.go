@@ -197,11 +197,17 @@ func (a *Applier) Actions(s *protos.WorkflowRuntimeState, customStatus *wrappers
 							},
 						}
 					} else {
-						// TODO: What is the expected result for termination?
+						failure := completedAction.FailureDetails
+						if failure == nil {
+							failure = &protos.TaskFailureDetails{
+								ErrorType:    "ChildWorkflowFailed",
+								ErrorMessage: "child workflow ended with status " + completedAction.WorkflowStatus.String(),
+							}
+						}
 						msg.HistoryEvent.EventType = &protos.HistoryEvent_ChildWorkflowInstanceFailed{
 							ChildWorkflowInstanceFailed: &protos.ChildWorkflowInstanceFailedEvent{
 								TaskScheduledId: s.StartEvent.ParentInstance.TaskScheduledId,
-								FailureDetails:  completedAction.FailureDetails,
+								FailureDetails:  failure,
 							},
 						}
 					}

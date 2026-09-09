@@ -20,6 +20,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	"github.com/mafilus/durabletask-go/api"
 	"github.com/mafilus/durabletask-go/api/protos"
@@ -35,9 +36,10 @@ func events(n int) []*protos.HistoryEvent {
 
 func workflowReq(iid string, past, new int) *protos.WorkflowRequest {
 	return &protos.WorkflowRequest{
-		InstanceId: iid,
-		PastEvents: events(past),
-		NewEvents:  events(new),
+		InstanceId:  iid,
+		ExecutionId: wrapperspb.String("generation-1"),
+		PastEvents:  events(past),
+		NewEvents:   events(new),
 	}
 }
 
@@ -151,6 +153,41 @@ func TestApplyStatefulHistory_BoundsWarmMap(t *testing.T) {
 
 	assert.LessOrEqual(t, len(ss.warm), ss.maxWarm+1,
 		"warm map must stay bounded as new instances are dispatched")
+}
+
+func TestStatefulHistoryGenerationChangeOnAnotherStream(t *testing.T) {
+	for _, newLength := range []int{5, 8} {
+		t.Run(strconv.Itoa(newLength), func(t *testing.T) {
+			a, b := capableStream("a"), capableStream("b")
+			a.applyStatefulHistory(workflowReq("instance", 5, 0))
+			// B sees the next execution while A retains the preceding prefix.
+			next := workflowReq("instance", newLength, 0)
+			next.ExecutionId = wrapperspb.String("generation-2")
+			b.applyStatefulHistory(next)
+			next = workflowReq("instance", newLength, 0)
+			next.ExecutionId = wrapperspb.String("generation-2")
+			a.applyStatefulHistory(next)
+			require.Nil(t, next.CachedHistory)
+			require.Len(t, next.PastEvents, newLength)
+			// Once rebased, the new generation may use deltas again.
+			grown := workflowReq("instance", newLength+1, 0)
+			grown.ExecutionId = wrapperspb.String("generation-2")
+			a.applyStatefulHistory(grown)
+			require.EqualValues(t, newLength, grown.CachedHistory.EventCount)
+			require.Len(t, grown.PastEvents, 1)
+		})
+	}
+}
+
+func TestStatefulHistoryUnknownExecutionAlwaysSendsFull(t *testing.T) {
+	s := capableStream("a")
+	for i := 0; i < 2; i++ {
+		req := workflowReq("instance", 5, 0)
+		req.ExecutionId = nil
+		s.applyStatefulHistory(req)
+		require.Nil(t, req.CachedHistory)
+		require.Len(t, req.PastEvents, 5)
+	}
 }
 
 // streamsWith builds a grpcExecutor whose stream registry holds the given streams,

@@ -188,6 +188,7 @@ func TestWorkflowEventBatchesAreFIFOAndComplete(t *testing.T) {
 
 func newDurabilityBackendWithMaxConns(t *testing.T, workflowLease, activityLease time.Duration, maxConns int32) *postgresBackend {
 	t.Helper()
+	requirePostgresTests(t)
 
 	port64, err := strconv.ParseUint(getenv("PGPORT", "5432"), 10, 16)
 	if err != nil {

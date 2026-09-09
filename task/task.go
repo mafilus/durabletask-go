@@ -105,6 +105,11 @@ func (t *completableTask) complete(rawResult []byte) {
 }
 
 func (t *completableTask) fail(fd *protos.TaskFailureDetails) {
+	// Failed events in existing histories may omit details (notably a
+	// terminated child). An absent description must never turn failure into success.
+	if fd == nil {
+		fd = &protos.TaskFailureDetails{ErrorType: "TaskFailed", ErrorMessage: "task failed without failure details"}
+	}
 	t.failureDetails = fd
 	t.completeInternal()
 }
