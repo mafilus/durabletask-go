@@ -18,14 +18,14 @@ The project originated as a Go clone of the [.NET-based Durable Task Framework](
 
 ## Current release
 
-The current stable release is [v1.2.0](https://github.com/mafilus/durabletask-go/releases/tag/v1.2.0).
+The current stable release is [v1.2.1](https://github.com/mafilus/durabletask-go/releases/tag/v1.2.1).
 It requires Go 1.26.6 or newer, as declared in [go.mod](go.mod).
 
 ```bash
-go get github.com/mafilus/durabletask-go@v1.2.0
+go get github.com/mafilus/durabletask-go@v1.2.1
 ```
 
-See the [release note](docs/releases/v1.2.0.md) for upgrade instructions and
+See the [release note](docs/releases/v1.2.1.md) for upgrade instructions and
 validation evidence, including the separately triggered PostgreSQL chaos run.
 
 ## Compatibility posture
@@ -53,6 +53,11 @@ Upgrade workers before enabling `backend.WithRequireCompletionTokens()` on the
 server: legacy responses without a token remain accepted by default. See the
 [v1.2.0 release note](docs/releases/v1.2.0.md) for the compatibility and proof
 boundaries.
+
+Version `v1.2.1` fixes execution isolation across cancellation and recreation,
+and updates gRPC for two security fixes. Before deploying it, coordinate SQL
+writers and drain or migrate ambiguous legacy child results as described in the
+[v1.2.1 release note](docs/releases/v1.2.1.md).
 
 ## Security responsibility boundary
 
