@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -16,11 +17,16 @@ import (
 	"github.com/mafilus/durabletask-go/api/protos"
 )
 
+// Crash recovery can spend over 40 seconds syncing the data directory on a
+// Docker host. Leave time to observe the original lease/timer before expiry;
+// each test still rejects a restart that exhausts this observation window.
+const postgresChaosObservationWindow = time.Minute
+
 func TestIntegrationPostgresRestartDuringWorkflowLease(t *testing.T) {
 	requirePostgresChaos(t)
 
 	ctx := context.Background()
-	const lease = 15 * time.Second
+	const lease = postgresChaosObservationWindow
 	workerA := newDurabilityBackend(t, lease, lease)
 	resetDurabilityTables(t, ctx, workerA)
 	insertWorkflowWithEvent(t, ctx, workerA, durabilityInstanceID, nil, 1)
@@ -64,7 +70,7 @@ func TestIntegrationPostgresRestartAfterExternalActivityEffectIsRedelivered(t *t
 	t.Cleanup(effectServer.Close)
 
 	ctx := context.Background()
-	const lease = 15 * time.Second
+	const lease = postgresChaosObservationWindow
 	workerA := newDurabilityBackend(t, lease, lease)
 	resetDurabilityTables(t, ctx, workerA)
 	insertActivity(t, ctx, workerA, durabilityInstanceID, 1)
@@ -104,7 +110,7 @@ func TestIntegrationPostgresRestartWithPendingTimer(t *testing.T) {
 	requirePostgresChaos(t)
 
 	ctx := context.Background()
-	const timerDelay = 15 * time.Second
+	const timerDelay = postgresChaosObservationWindow
 	workerA := newDurabilityBackend(t, timerDelay, timerDelay)
 	resetDurabilityTables(t, ctx, workerA)
 
@@ -137,7 +143,7 @@ func TestIntegrationPostgresRestartDuringWorkflowCompletion(t *testing.T) {
 	requirePostgresChaos(t)
 
 	ctx := context.Background()
-	const lease = 15 * time.Second
+	const lease = postgresChaosObservationWindow
 	workerA := newDurabilityBackend(t, lease, lease)
 	resetDurabilityTables(t, ctx, workerA)
 	observer := newDurabilityBackend(t, lease, lease)
@@ -278,7 +284,18 @@ func restartPostgresChaos(t *testing.T) {
 	t.Helper()
 	composeFile := os.Getenv("STRIX_POSTGRES_CHAOS_COMPOSE_FILE")
 	project := os.Getenv("STRIX_POSTGRES_CHAOS_PROJECT")
+	containerIDs := strings.Fields(runDockerChaos(t, "compose", "-f", composeFile, "-p", project, "ps", "--quiet", "db"))
+	if len(containerIDs) != 1 {
+		t.Fatalf("expected one running PostgreSQL chaos container, got %v", containerIDs)
+	}
 	runCompose(t, composeFile, project, "kill", "db")
+	// Observe the crash and explicitly restart the same container. Compose up
+	// can report a killed service as running without restarting it. Keeping
+	// the container preserves its published port and data volume across crashes.
+	if exitCode := strings.TrimSpace(runDockerChaos(t, "wait", containerIDs[0])); exitCode != "137" {
+		t.Fatalf("PostgreSQL chaos container exited with %q, want SIGKILL exit 137", exitCode)
+	}
+	runDockerChaos(t, "start", containerIDs[0])
 	runCompose(t, composeFile, project, "up", "-d", "--wait", "db")
 }
 
@@ -286,9 +303,27 @@ func runCompose(t *testing.T, composeFile, project string, args ...string) {
 	t.Helper()
 	commandArgs := []string{"compose", "-f", composeFile, "-p", project}
 	commandArgs = append(commandArgs, args...)
-	command := exec.Command("docker", commandArgs...)
+	runDockerChaos(t, commandArgs...)
+}
+
+func runDockerChaos(t *testing.T, commandArgs ...string) string {
+	t.Helper()
+	timeout := 30 * time.Second
+	for _, arg := range commandArgs {
+		if arg == "--wait" {
+			// Allow the Compose healthcheck's 30 retries at two-second
+			// intervals; the tests still enforce their existing lease windows.
+			timeout = 2 * time.Minute
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	command := exec.CommandContext(ctx, "docker", commandArgs...)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("docker %v: %v\n%s", commandArgs, err, output)
+		return ""
+	} else {
+		return string(output)
 	}
 }
 
