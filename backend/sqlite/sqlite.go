@@ -19,6 +19,7 @@ import (
 	"github.com/mafilus/durabletask-go/backend"
 	"github.com/mafilus/durabletask-go/backend/local"
 	"github.com/mafilus/durabletask-go/backend/runtimestate"
+	"github.com/mafilus/durabletask-go/backend/runtimestate/dedup"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
@@ -244,9 +245,10 @@ func (be *sqliteBackend) CompleteWorkflowWorkItem(ctx context.Context, wi *backe
 				continue
 			}
 			isCreated = true
-			sqlSB.WriteString("[CreatedTime] = ?, [Input] = ?, ")
+			sqlSB.WriteString("[CreatedTime] = ?, [Input] = ?, [ExecutionID] = ?, ")
 			sqlUpdateArgs = append(sqlUpdateArgs, e.Timestamp.AsTime())
 			sqlUpdateArgs = append(sqlUpdateArgs, es.Input.GetValue())
+			sqlUpdateArgs = append(sqlUpdateArgs, es.GetWorkflowInstance().GetExecutionId().GetValue())
 		} else if ec := e.GetExecutionCompleted(); ec != nil {
 			if isCompleted {
 				// TODO: Log warning about duplicate completion event
@@ -292,6 +294,9 @@ func (be *sqliteBackend) CompleteWorkflowWorkItem(ctx context.Context, wi *backe
 
 	// If continue-as-new, delete all existing history
 	if wi.State.ContinuedAsNew {
+		if err := be.discardPreviousExecutionWork(ctx, tx, wi); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, "DELETE FROM History WHERE InstanceID = ?", string(wi.InstanceID)); err != nil {
 			return fmt.Errorf("failed to delete from History table: %w", err)
 		}
@@ -388,7 +393,12 @@ func (be *sqliteBackend) CompleteWorkflowWorkItem(ctx context.Context, wi *backe
 				return err
 			}
 
-			sqlInsertArgs = append(sqlInsertArgs, msg.TargetInstanceId, eventPayload, nil)
+			var visibleTime *time.Time
+			if ts := msg.HistoryEvent.GetExecutionStarted().GetScheduledStartTimestamp(); ts != nil {
+				startTime := ts.AsTime()
+				visibleTime = &startTime
+			}
+			sqlInsertArgs = append(sqlInsertArgs, msg.TargetInstanceId, eventPayload, visibleTime)
 		}
 
 		_, err = tx.ExecContext(ctx, insertSql, sqlInsertArgs...)
@@ -423,6 +433,48 @@ func (be *sqliteBackend) CompleteWorkflowWorkItem(ctx context.Context, wi *backe
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
+	return nil
+}
+
+// Delete activities before reading their results: an activity completion that
+// won the race has committed its result, while a later completion loses its
+// task lease and rolls back. Preserve external events and the current inbound
+// batch, which is acknowledged by CompleteWorkflowWorkItem after this cleanup.
+func (be *sqliteBackend) discardPreviousExecutionWork(ctx context.Context, tx *sql.Tx, wi *backend.WorkflowWorkItem) error {
+	if _, err := tx.ExecContext(ctx, "DELETE FROM NewTasks WHERE InstanceID = ?", string(wi.InstanceID)); err != nil {
+		return fmt.Errorf("failed to retire previous execution activities: %w", err)
+	}
+	rows, err := tx.QueryContext(ctx, "SELECT SequenceNumber, EventPayload FROM NewEvents WHERE InstanceID = ? AND (LockedBy IS NULL OR LockedBy <> ?)", string(wi.InstanceID), wi.LockedBy)
+	if err != nil {
+		return fmt.Errorf("failed to read previous execution events: %w", err)
+	}
+	defer rows.Close()
+	var obsolete []int64
+	for rows.Next() {
+		var sequence int64
+		var payload []byte
+		if err := rows.Scan(&sequence, &payload); err != nil {
+			return fmt.Errorf("failed to read previous execution event: %w", err)
+		}
+		event, err := backend.UnmarshalHistoryEvent(payload)
+		if err != nil {
+			return err
+		}
+		if _, _, scoped := dedup.Of(event); scoped {
+			obsolete = append(obsolete, sequence)
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("failed to close previous execution events: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("failed to finish reading previous execution events: %w", err)
+	}
+	for _, sequence := range obsolete {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM NewEvents WHERE SequenceNumber = ?", sequence); err != nil {
+			return fmt.Errorf("failed to retire previous execution event: %w", err)
+		}
+	}
 	return nil
 }
 

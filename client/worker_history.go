@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -62,7 +63,8 @@ func (c *TaskHubGrpcClient) resolveWorkflowHistory(
 	iid := api.InstanceID(workItem.InstanceId)
 	delta := workItem.GetPastEvents()
 
-	if cached, ok := historyCache.getForExecution(iid, workItem.GetExecutionId().GetValue()); ok && workItem.GetExecutionId().GetValue() != "" && len(cached) == int(cachedHistory.GetEventCount()) {
+	executionID := workItem.GetExecutionId().GetValue()
+	if cached, ok := historyCache.getForExecution(iid, executionID); ok && len(cached) == int(cachedHistory.GetEventCount()) {
 		full := make([]*protos.HistoryEvent, 0, len(cached)+len(delta))
 		full = append(full, cached...)
 		full = append(full, delta...)
@@ -75,7 +77,19 @@ func (c *TaskHubGrpcClient) resolveWorkflowHistory(
 	if err != nil {
 		return nil, err
 	}
+	if executionID != "" && historyExecutionID(resp.GetEvents()) != executionID {
+		return nil, fmt.Errorf("history for %s no longer belongs to execution %s", iid, executionID)
+	}
 	return resp.GetEvents(), nil
+}
+
+func historyExecutionID(events []*protos.HistoryEvent) string {
+	for _, event := range events {
+		if started := event.GetExecutionStarted(); started != nil {
+			return started.GetWorkflowInstance().GetExecutionId().GetValue()
+		}
+	}
+	return ""
 }
 
 // workflowHistoryReset reports whether this turn ended the current instance's
@@ -154,23 +168,23 @@ func newWorkflowHistoryCache(cfg workflowHistoryCacheConfig) *workflowHistoryCac
 	}
 }
 
-func (h *workflowHistoryCache) get(iid api.InstanceID) ([]*protos.HistoryEvent, bool) {
-	return h.getForExecution(iid, "")
-}
-
-func (h *workflowHistoryCache) getForExecution(iid api.InstanceID, executionID string) ([]*protos.HistoryEvent, bool) {
+func (h *workflowHistoryCache) get(iid api.InstanceID, executionID ...string) ([]*protos.HistoryEvent, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	e, ok := h.entries[iid]
-	if !ok || e.executionID != executionID {
+	if !ok || (len(executionID) > 0 && (executionID[0] == "" || e.executionID != executionID[0])) {
 		return nil, false
 	}
 	e.lastAccess = h.now()
 	return e.events, true
 }
 
+func (h *workflowHistoryCache) getForExecution(iid api.InstanceID, executionID string) ([]*protos.HistoryEvent, bool) {
+	return h.get(iid, executionID)
+}
+
 func (h *workflowHistoryCache) put(iid api.InstanceID, events []*protos.HistoryEvent) {
-	h.putForExecution(iid, "", events)
+	h.putForExecution(iid, historyExecutionID(events), events)
 }
 
 func (h *workflowHistoryCache) putForExecution(iid api.InstanceID, executionID string, events []*protos.HistoryEvent) {

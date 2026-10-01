@@ -83,7 +83,7 @@ func TestApplyStatefulHistory_FirstTurnSendsFullThenWarms(t *testing.T) {
 	assert.Len(t, req.PastEvents, 5)
 	assert.Nil(t, req.CachedHistory)
 	// ...but the instance is now warm up to the committed-history length.
-	assert.Equal(t, 5, ss.warm["a"])
+	assert.Equal(t, 5, ss.warm["a"].eventCount)
 }
 
 func TestApplyStatefulHistory_SubsequentTurnSendsDelta(t *testing.T) {
@@ -93,7 +93,7 @@ func TestApplyStatefulHistory_SubsequentTurnSendsDelta(t *testing.T) {
 
 	// Turn 1: 5 committed events, full send, warm -> 5.
 	ss.applyStatefulHistory(workflowReq("a", 5, 2))
-	assert.Equal(t, 5, ss.warm["a"])
+	assert.Equal(t, 5, ss.warm["a"].eventCount)
 
 	// Turn 2: history has grown to 8 committed events. The worker already holds
 	// the first 5, so only the 3-event delta should be sent.
@@ -104,7 +104,7 @@ func TestApplyStatefulHistory_SubsequentTurnSendsDelta(t *testing.T) {
 	assert.Equal(t, int32(5), req2.CachedHistory.GetEventCount())
 	assert.Len(t, req2.PastEvents, 3, "only events 5..8 should be sent as the delta")
 	assert.Len(t, req2.NewEvents, 1, "new events are always sent in full")
-	assert.Equal(t, 8, ss.warm["a"])
+	assert.Equal(t, 8, ss.warm["a"].eventCount)
 }
 
 func TestApplyStatefulHistory_PerInstanceIsolation(t *testing.T) {
@@ -119,8 +119,8 @@ func TestApplyStatefulHistory_PerInstanceIsolation(t *testing.T) {
 
 	assert.Nil(t, reqB.CachedHistory)
 	assert.Len(t, reqB.PastEvents, 4)
-	assert.Equal(t, 3, ss.warm["a"])
-	assert.Equal(t, 4, ss.warm["b"])
+	assert.Equal(t, 3, ss.warm["a"].eventCount)
+	assert.Equal(t, 4, ss.warm["b"].eventCount)
 }
 
 func TestApplyStatefulHistory_ShrinkingHistoryFallsBackToFull(t *testing.T) {
@@ -131,14 +131,45 @@ func TestApplyStatefulHistory_ShrinkingHistoryFallsBackToFull(t *testing.T) {
 	})
 
 	ss.applyStatefulHistory(workflowReq("a", 10, 0))
-	assert.Equal(t, 10, ss.warm["a"])
+	assert.Equal(t, 10, ss.warm["a"].eventCount)
 
 	req2 := workflowReq("a", 2, 1)
 	ss.applyStatefulHistory(req2)
 
 	assert.Nil(t, req2.CachedHistory, "must not send a delta when history shrank")
 	assert.Len(t, req2.PastEvents, 2)
-	assert.Equal(t, 2, ss.warm["a"], "warm count is re-based to the new history length")
+	assert.Equal(t, 2, ss.warm["a"].eventCount, "warm count is re-based to the new history length")
+}
+
+func TestApplyStatefulHistory_ChangedExecutionSendsFullHistory(t *testing.T) {
+	for _, nextLength := range []int{3, 5} {
+		t.Run(strconv.Itoa(nextLength), func(t *testing.T) {
+			ss := newStreamState("s1", &protos.GetWorkItemsRequest{Capabilities: []protos.WorkerCapability{protos.WorkerCapability_WORKER_CAPABILITY_STATEFUL_HISTORY}})
+			ss.applyStatefulHistory(workflowReq("a", 3, 1))
+			next := workflowReq("a", nextLength, 1)
+			next.ExecutionId = wrapperspb.String("new-execution")
+			ss.applyStatefulHistory(next)
+			require.Nil(t, next.CachedHistory)
+			require.Len(t, next.PastEvents, nextLength)
+			// Subsequent turns of the new execution can use its own prefix.
+			following := workflowReq("a", nextLength+2, 1)
+			following.ExecutionId = next.ExecutionId
+			ss.applyStatefulHistory(following)
+			require.EqualValues(t, nextLength, following.GetCachedHistory().GetEventCount())
+			require.Len(t, following.PastEvents, 2)
+		})
+	}
+}
+
+func TestApplyStatefulHistory_UnknownExecutionSendsFullHistory(t *testing.T) {
+	ss := newStreamState("s1", &protos.GetWorkItemsRequest{Capabilities: []protos.WorkerCapability{protos.WorkerCapability_WORKER_CAPABILITY_STATEFUL_HISTORY}})
+	for i := 0; i < 2; i++ {
+		req := workflowReq("a", 3, 1)
+		req.ExecutionId = nil
+		ss.applyStatefulHistory(req)
+		require.Nil(t, req.CachedHistory)
+		require.Len(t, req.PastEvents, 3)
+	}
 }
 
 func TestApplyStatefulHistory_BoundsWarmMap(t *testing.T) {

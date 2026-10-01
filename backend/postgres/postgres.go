@@ -19,6 +19,7 @@ import (
 	"github.com/mafilus/durabletask-go/backend"
 	"github.com/mafilus/durabletask-go/backend/local"
 	"github.com/mafilus/durabletask-go/backend/runtimestate"
+	"github.com/mafilus/durabletask-go/backend/runtimestate/dedup"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
@@ -377,10 +378,11 @@ func (be *postgresBackend) CompleteWorkflowWorkItem(ctx context.Context, wi *bac
 				continue
 			}
 			isCreated = true
-			sqlSB.WriteString(fmt.Sprintf("CreatedTime = $%d, Input = $%d, ", currIndex, currIndex+1))
-			currIndex += 2
+			sqlSB.WriteString(fmt.Sprintf("CreatedTime = $%d, Input = $%d, ExecutionID = $%d, ", currIndex, currIndex+1, currIndex+2))
+			currIndex += 3
 			sqlUpdateArgs = append(sqlUpdateArgs, e.Timestamp.AsTime())
 			sqlUpdateArgs = append(sqlUpdateArgs, es.Input.GetValue())
+			sqlUpdateArgs = append(sqlUpdateArgs, es.GetWorkflowInstance().GetExecutionId().GetValue())
 		} else if ec := e.GetExecutionCompleted(); ec != nil {
 			if isCompleted {
 				// TODO: Log warning about duplicate completion event
@@ -429,6 +431,9 @@ func (be *postgresBackend) CompleteWorkflowWorkItem(ctx context.Context, wi *bac
 
 	// If continue-as-new, delete all existing history
 	if wi.State.GetContinuedAsNew() {
+		if err := be.discardPreviousExecutionWork(ctx, tx, wi); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, "DELETE FROM History WHERE InstanceID = $1", string(wi.InstanceID)); err != nil {
 			return fmt.Errorf("failed to delete from History table: %w", err)
 		}
@@ -546,7 +551,12 @@ func (be *postgresBackend) CompleteWorkflowWorkItem(ctx context.Context, wi *bac
 				return err
 			}
 
-			sqlInsertArgs = append(sqlInsertArgs, msg.TargetInstanceId, eventPayload, nil)
+			var visibleTime *time.Time
+			if ts := msg.HistoryEvent.GetExecutionStarted().GetScheduledStartTimestamp(); ts != nil {
+				startTime := ts.AsTime()
+				visibleTime = &startTime
+			}
+			sqlInsertArgs = append(sqlInsertArgs, msg.TargetInstanceId, eventPayload, visibleTime)
 		}
 
 		_, err = tx.Exec(ctx, insertSql, sqlInsertArgs...)
@@ -582,6 +592,46 @@ func (be *postgresBackend) CompleteWorkflowWorkItem(ctx context.Context, wi *bac
 	}
 	afterWorkflowCompletionCommit()
 
+	return nil
+}
+
+// Taking the task rows before reading results fences concurrent completions:
+// those already committing finish first; later completions lose their lease.
+// External events remain queued across ContinueAsNew. The current inbound
+// batch remains owned until CompleteWorkflowWorkItem acknowledges it.
+func (be *postgresBackend) discardPreviousExecutionWork(ctx context.Context, tx pgx.Tx, wi *backend.WorkflowWorkItem) error {
+	if _, err := tx.Exec(ctx, "DELETE FROM NewTasks WHERE InstanceID = $1", string(wi.InstanceID)); err != nil {
+		return fmt.Errorf("failed to retire previous execution activities: %w", err)
+	}
+	rows, err := tx.Query(ctx, "SELECT SequenceNumber, EventPayload FROM NewEvents WHERE InstanceID = $1 AND (LockedBy IS NULL OR LockedBy <> $2)", string(wi.InstanceID), wi.LockedBy)
+	if err != nil {
+		return fmt.Errorf("failed to read previous execution events: %w", err)
+	}
+	defer rows.Close()
+	var obsolete []int64
+	for rows.Next() {
+		var sequence int64
+		var payload []byte
+		if err := rows.Scan(&sequence, &payload); err != nil {
+			return fmt.Errorf("failed to read previous execution event: %w", err)
+		}
+		event, err := backend.UnmarshalHistoryEvent(payload)
+		if err != nil {
+			return err
+		}
+		if _, _, scoped := dedup.Of(event); scoped {
+			obsolete = append(obsolete, sequence)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("failed to finish reading previous execution events: %w", err)
+	}
+	for _, sequence := range obsolete {
+		if _, err := tx.Exec(ctx, "DELETE FROM NewEvents WHERE SequenceNumber = $1", sequence); err != nil {
+			return fmt.Errorf("failed to retire previous execution event: %w", err)
+		}
+	}
 	return nil
 }
 

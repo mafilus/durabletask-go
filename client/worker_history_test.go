@@ -33,6 +33,9 @@ func histEvents(n int) []*protos.HistoryEvent {
 	for i := range e {
 		e[i] = &protos.HistoryEvent{EventId: int32(i)}
 	}
+	if n > 0 {
+		e[0].EventType = &protos.HistoryEvent_ExecutionStarted{ExecutionStarted: &protos.ExecutionStartedEvent{WorkflowInstance: &protos.WorkflowInstance{ExecutionId: wrapperspb.String("test-execution")}}}
+	}
 	return e
 }
 
@@ -94,6 +97,7 @@ func TestResolveWorkflowHistory_CacheMissFetchesFromServer(t *testing.T) {
 	req := &protos.WorkflowRequest{
 		InstanceId:    "a",
 		CachedHistory: &protos.CachedHistory{EventCount: 5},
+		ExecutionId:   wrapperspb.String("test-execution"),
 		PastEvents:    histEvents(3),
 	}
 
@@ -110,12 +114,12 @@ func TestResolveWorkflowHistory_LengthMismatchIsMiss(t *testing.T) {
 	stub := &fakeSidecarClient{events: histEvents(9)}
 	c := &TaskHubGrpcClient{client: stub}
 	cache := newWorkflowHistoryCache(workflowHistoryCacheConfig{})
-	cache.putForExecution("a", "generation-1", histEvents(4))
+	cache.putForExecution("a", "test-execution", histEvents(4))
 
 	req := &protos.WorkflowRequest{
 		InstanceId:    "a",
-		ExecutionId:   wrapperspb.String("generation-1"),
 		CachedHistory: &protos.CachedHistory{EventCount: 5},
+		ExecutionId:   wrapperspb.String("test-execution"),
 		PastEvents:    histEvents(3),
 	}
 
@@ -129,6 +133,9 @@ func TestResolveWorkflowHistoryGenerationMismatchIsMiss(t *testing.T) {
 	for _, executionID := range []string{"generation-2", ""} {
 		t.Run("execution="+executionID, func(t *testing.T) {
 			stub := &fakeSidecarClient{events: histEvents(8)}
+			if executionID != "" {
+				stub.events[0].GetExecutionStarted().WorkflowInstance.ExecutionId = wrapperspb.String(executionID)
+			}
 			c := &TaskHubGrpcClient{client: stub}
 			cache := newWorkflowHistoryCache(workflowHistoryCacheConfig{})
 			cache.putForExecution("a", "generation-1", histEvents(5))
@@ -139,6 +146,36 @@ func TestResolveWorkflowHistoryGenerationMismatchIsMiss(t *testing.T) {
 			require.Equal(t, stub.events, got)
 		})
 	}
+}
+
+func TestResolveWorkflowHistory_ExecutionMismatchFetchesCurrentHistory(t *testing.T) {
+	old := histEvents(3)
+	current := histEvents(3)
+	current[0].GetExecutionStarted().WorkflowInstance.ExecutionId = wrapperspb.String("new-execution")
+	stub := &fakeSidecarClient{events: current}
+	c := &TaskHubGrpcClient{client: stub}
+	cache := newWorkflowHistoryCache(workflowHistoryCacheConfig{})
+	cache.put("a", old)
+	request := &protos.WorkflowRequest{InstanceId: "a", ExecutionId: wrapperspb.String("new-execution"), CachedHistory: &protos.CachedHistory{EventCount: 3}}
+	got, err := c.resolveWorkflowHistory(context.Background(), cache, request)
+	require.NoError(t, err)
+	require.Equal(t, 1, stub.calls)
+	require.Equal(t, "new-execution", historyExecutionID(got))
+	// The fetch can race another ContinueAsNew. Reset the stream instead of
+	// executing a history that no longer matches the dispatched work item.
+	stub.events = old
+	_, err = c.resolveWorkflowHistory(context.Background(), cache, request)
+	require.Error(t, err)
+}
+
+func TestResolveWorkflowHistory_UnknownExecutionDoesNotUseCache(t *testing.T) {
+	stub := &fakeSidecarClient{events: histEvents(3)}
+	c := &TaskHubGrpcClient{client: stub}
+	cache := newWorkflowHistoryCache(workflowHistoryCacheConfig{})
+	cache.put("a", histEvents(3))
+	_, err := c.resolveWorkflowHistory(context.Background(), cache, &protos.WorkflowRequest{InstanceId: "a", CachedHistory: &protos.CachedHistory{EventCount: 3}})
+	require.NoError(t, err)
+	require.Equal(t, 1, stub.calls)
 }
 
 func TestWorkflowHistoryReset(t *testing.T) {
