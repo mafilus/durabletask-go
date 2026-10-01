@@ -31,6 +31,8 @@ type completableTask struct {
 	failureDetails    *protos.TaskFailureDetails
 	completedCallback func()
 	taskExecutionId   string
+	childInstanceID   string
+	childAction       *protos.WorkflowAction
 	// kind is the resolution correlator family this task belongs to when it
 	// is registered in pendingTasks (task, timer or child). A resolution
 	// event only completes a pending entry of its own kind; anything else is

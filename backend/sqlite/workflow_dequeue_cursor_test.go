@@ -25,11 +25,11 @@ func TestWorkflowDequeueRollsBackOnReturningCursorError(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("UPDATE Instances SET").WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnRows(
-		sqlmock.NewRows([]string{"InstanceID"}).AddRow("cursor-error-workflow"),
+		sqlmock.NewRows([]string{"InstanceID", "ExecutionID"}).AddRow("cursor-error-workflow", "g1"),
 	)
 	mock.ExpectQuery("UPDATE NewEvents SET").WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnRows(
-		sqlmock.NewRows([]string{"SequenceNumber", "EventPayload", "DequeueCount"}).
-			AddRow(int64(1), payload, int32(1)).
+		sqlmock.NewRows([]string{"SequenceNumber", "EventPayload", "DequeueCount", "ExecutionID"}).
+			AddRow(int64(1), payload, int32(1), nil).
 			CloseError(cursorErr),
 	).RowsWillBeClosed()
 	mock.ExpectRollback()

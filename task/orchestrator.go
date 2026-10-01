@@ -468,8 +468,18 @@ func (ctx *WorkflowContext) CallChildWorkflow(workflow interface{}, opts ...Chil
 		// Each retry still gets its own instance ID from the applier.
 		firstInstanceID := options.instanceID
 		if firstInstanceID == "" {
-			firstInstanceID = helpers.GenerateChildWorkflowInstanceID(string(ctx.ID), ctx.sequenceNumber)
+			executionID := ""
+			for _, events := range [][]*protos.HistoryEvent{ctx.oldEvents, ctx.newEvents} {
+				for _, event := range events {
+					if es := event.GetExecutionStarted(); es != nil {
+						executionID = es.GetWorkflowInstance().GetExecutionId().GetValue()
+						break
+					}
+				}
+			}
+			firstInstanceID = helpers.GenerateChildWorkflowInstanceIDForExecution(string(ctx.ID), executionID, ctx.sequenceNumber)
 		}
+		var firstTask *completableTask
 		return ctx.internalScheduleTaskWithRetries(workflowName+"-retry", ctx.CurrentTimeUtc, func(_ string, isRetry bool) Task {
 			// On retry attempts (2nd onward) carry the first attempt's instance
 			// ID so the runtime can record it on the resulting
@@ -478,8 +488,24 @@ func (ctx *WorkflowContext) CallChildWorkflow(workflow interface{}, opts ...Chil
 			if isRetry {
 				return ctx.internalCallChildWorkflow(workflowName, options, &firstInstanceID)
 			}
-			return ctx.internalCallChildWorkflow(workflowName, options, nil)
+			result := ctx.internalCallChildWorkflow(workflowName, options, nil)
+			firstTask, _ = result.(*completableTask)
+			return result
 		}, *options.retryPolicy, 0, uuid.NewString(), func(a *protos.CreateTimerAction, _ string) {
+			if firstTask != nil && firstTask.childInstanceID != "" {
+				firstInstanceID = firstTask.childInstanceID
+			}
+			// A result may precede scheduling during replay. Consult recorded
+			// scheduling before generating the retry timer, including legacy IDs.
+			if firstTask != nil && firstTask.childAction != nil {
+				for _, events := range [][]*protos.HistoryEvent{ctx.oldEvents, ctx.newEvents} {
+					for _, event := range events {
+						if created := event.GetChildWorkflowInstanceCreated(); created != nil && event.EventId == firstTask.childAction.Id && created.GetInstanceId() != "" {
+							firstInstanceID = created.GetInstanceId()
+						}
+					}
+				}
+			}
 			a.Origin = &protos.CreateTimerAction_ChildWorkflowRetry{
 				ChildWorkflowRetry: &protos.TimerOriginChildWorkflowRetry{
 					InstanceId: firstInstanceID,
@@ -527,6 +553,7 @@ func (ctx *WorkflowContext) internalCallChildWorkflow(workflowName string, optio
 
 	task := newTask(ctx)
 	task.kind = dedup.KindChild
+	task.childAction = createChildWorkflowAction
 	ctx.pendingTasks[createChildWorkflowAction.Id] = task
 	ctx.consumeBufferedResolution(dedup.KindChild, createChildWorkflowAction.Id)
 	return task
@@ -981,6 +1008,9 @@ func (ctx *WorkflowContext) onChildWorkflowScheduled(taskID int32, ts *protos.Ch
 			ts.Name,
 			taskID,
 		)
+	}
+	if task := ctx.pendingTasks[taskID]; task != nil && task.kind == dedup.KindChild {
+		task.childInstanceID = ts.GetInstanceId()
 	}
 	delete(ctx.pendingActions, taskID)
 	return nil

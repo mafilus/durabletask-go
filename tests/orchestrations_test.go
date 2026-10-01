@@ -572,6 +572,8 @@ func Test_SingleChildWorkflow_Failed_Retries(t *testing.T) {
 
 func Test_SingleChildWorkflow_Failed_Retries_AutoInstanceID(t *testing.T) {
 	r := task.NewTaskRegistry()
+	var childIDs []api.InstanceID
+	var childIDsMu sync.Mutex
 	r.AddWorkflowN("Parent", func(ctx *task.WorkflowContext) (any, error) {
 		// No explicit instance ID — each retry gets a different auto-generated
 		// instance ID from the applier, but the timer origin always points to
@@ -586,6 +588,9 @@ func Test_SingleChildWorkflow_Failed_Retries_AutoInstanceID(t *testing.T) {
 		return nil, err
 	})
 	r.AddWorkflowN("Child", func(ctx *task.WorkflowContext) (any, error) {
+		childIDsMu.Lock()
+		childIDs = append(childIDs, ctx.ID)
+		childIDsMu.Unlock()
 		return nil, errors.New("Child failed")
 	})
 
@@ -603,18 +608,21 @@ func Test_SingleChildWorkflow_Failed_Retries_AutoInstanceID(t *testing.T) {
 		assert.Contains(t, metadata.FailureDetails.ErrorMessage, "Child failed")
 	}
 
-	// Each retry gets a different auto-generated instance ID (action IDs: 0, 2, 4).
-	childID := func(actionID int) api.InstanceID {
-		return api.InstanceID(fmt.Sprintf("%s:%04x", id, actionID))
-	}
+	// Validate actual child executions, rather than assuming the legacy ID format.
+	childIDsMu.Lock()
+	defer childIDsMu.Unlock()
+	require.Len(t, childIDs, 3)
+	require.NotEqual(t, childIDs[0], childIDs[1])
+	require.NotEqual(t, childIDs[0], childIDs[2])
+	require.NotEqual(t, childIDs[1], childIDs[2])
 	spans := exporter.GetSpans().Snapshots()
 	utils.AssertSpanSequence(t, spans,
 		utils.AssertWorkflowCreated("Parent", id),
-		utils.AssertWorkflowExecuted("Child", childID(0), "FAILED"),
+		utils.AssertWorkflowExecuted("Child", childIDs[0], "FAILED"),
 		utils.AssertTimer(id, utils.AssertTaskID(1)),
-		utils.AssertWorkflowExecuted("Child", childID(2), "FAILED"),
+		utils.AssertWorkflowExecuted("Child", childIDs[1], "FAILED"),
 		utils.AssertTimer(id, utils.AssertTaskID(3)),
-		utils.AssertWorkflowExecuted("Child", childID(4), "FAILED"),
+		utils.AssertWorkflowExecuted("Child", childIDs[2], "FAILED"),
 		utils.AssertWorkflowExecuted("Parent", id, "FAILED"),
 	)
 }

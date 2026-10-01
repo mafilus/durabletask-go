@@ -21,10 +21,10 @@ func TestWorkflowDequeueRollsBackOnReturningCursorError(t *testing.T) {
 	cursorErr := errors.New("injected RETURNING cursor error")
 
 	mockDB.ExpectBegin()
-	mockDB.ExpectQuery("UPDATE Instances SET").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnRows(mockDB.NewRows([]string{"InstanceID"}).AddRow("cursor-error-workflow"))
+	mockDB.ExpectQuery("UPDATE Instances SET").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnRows(mockDB.NewRows([]string{"InstanceID", "ExecutionID"}).AddRow("cursor-error-workflow", "g1"))
 	mockDB.ExpectQuery("UPDATE NewEvents SET").WillReturnRows(
-		mockDB.NewRows([]string{"SequenceNumber", "EventPayload", "DequeueCount"}).
-			AddRow(int64(1), payload, int32(1)).
+		mockDB.NewRows([]string{"SequenceNumber", "EventPayload", "DequeueCount", "ExecutionID"}).
+			AddRow(int64(1), payload, int32(1), nil).
 			CloseError(cursorErr),
 	).WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).RowsWillBeClosed()
 	mockDB.ExpectRollback()

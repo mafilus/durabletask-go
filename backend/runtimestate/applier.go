@@ -288,7 +288,7 @@ func (a *Applier) Actions(s *protos.WorkflowRuntimeState, customStatus *wrappers
 			// Autogenerate an instance ID for the child workflow if none is provided, using a
 			// deterministic algorithm based on the parent instance ID to help enable de-duplication.
 			if createSO.InstanceId == "" {
-				createSO.InstanceId = helpers.GenerateChildWorkflowInstanceID(s.InstanceId, action.Id)
+				createSO.InstanceId = helpers.GenerateChildWorkflowInstanceIDForExecution(s.InstanceId, s.GetStartEvent().GetWorkflowInstance().GetExecutionId().GetValue(), action.Id)
 			}
 			_ = AddEvent(s, &protos.HistoryEvent{
 				EventId:   action.Id,

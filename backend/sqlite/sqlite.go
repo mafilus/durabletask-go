@@ -350,6 +350,39 @@ func (be *sqliteBackend) CompleteWorkflowWorkItem(ctx context.Context, wi *backe
 
 	// Save outbound workflow events
 	newEventCount := len(wi.State.PendingTimers) + len(wi.State.PendingMessages)
+	for _, msg := range wi.State.PendingMessages {
+		if backend.IsChildResult(msg.HistoryEvent) {
+			newEventCount--
+		}
+	}
+	for _, msg := range wi.State.PendingMessages {
+		if !backend.IsChildResult(msg.HistoryEvent) {
+			continue
+		}
+		generation, err := backend.ChildResultExecutionID(wi.State, msg.TargetInstanceId)
+		if err != nil {
+			return err
+		}
+		payload, err := backend.MarshalHistoryEvent(msg.HistoryEvent)
+		if err != nil {
+			return err
+		}
+		var current string
+		err = tx.QueryRowContext(ctx, "SELECT ExecutionID FROM Instances WHERE InstanceID=?", msg.TargetInstanceId).Scan(&current)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if err := be.validateChildDestination(ctx, tx, msg.TargetInstanceId, current); err != nil {
+			return err
+		}
+		// SQLite's write transaction serializes this admission with CAN/purge.
+		if _, err := tx.ExecContext(ctx, "INSERT INTO NewEvents (InstanceID,EventPayload,ExecutionID) SELECT InstanceID,?,ExecutionID FROM Instances WHERE InstanceID=? AND ExecutionID=?", payload, msg.TargetInstanceId, generation); err != nil {
+			return err
+		}
+	}
 	if newEventCount > 0 {
 		insertSql := "INSERT INTO NewEvents ([InstanceID], [EventPayload], [VisibleTime]) VALUES (?, ?, ?)" +
 			strings.Repeat(", (?, ?, ?)", newEventCount-1)
@@ -366,17 +399,26 @@ func (be *sqliteBackend) CompleteWorkflowWorkItem(ctx context.Context, wi *backe
 		}
 
 		for _, msg := range wi.State.PendingMessages {
+			if backend.IsChildResult(msg.HistoryEvent) {
+				continue
+			}
 			if es := msg.HistoryEvent.GetExecutionStarted(); es != nil {
 				// Need to insert a new row into the DB
 				if _, err := be.createWorkflowInstanceInternal(ctx, msg.HistoryEvent, tx); err != nil {
 					if err == runtimestate.ErrDuplicateEvent || errors.Is(err, api.ErrDuplicateInstance) {
 						// Clean up existing instance and retry
 						if cleanupErr := be.cleanupWorkflowStateInternal(ctx, tx, api.InstanceID(es.WorkflowInstance.InstanceId), true); cleanupErr != nil {
+							if es.GetParentInstance() != nil {
+								return fmt.Errorf("child instance collision: %w", err)
+							}
 							be.logger.Warnf(
 								"%v: dropping child workflow creation event because an instance with the target ID (%v) already exists.",
 								wi.InstanceID,
 								es.WorkflowInstance.InstanceId)
 						} else if _, retryErr := be.createWorkflowInstanceInternal(ctx, msg.HistoryEvent, tx); retryErr != nil {
+							if es.GetParentInstance() != nil {
+								return retryErr
+							}
 							be.logger.Warnf(
 								"%v: dropping child workflow creation event because an instance with the target ID (%v) already exists.",
 								wi.InstanceID,
@@ -434,6 +476,33 @@ func (be *sqliteBackend) CompleteWorkflowWorkItem(ctx context.Context, wi *backe
 	}
 
 	return nil
+}
+
+// Old versions could advance committed history without updating Instances.
+// Reject that ambiguity before treating a captured child's result as obsolete.
+func (be *sqliteBackend) validateChildDestination(ctx context.Context, tx *sql.Tx, instanceID, executionID string) error {
+	rows, err := tx.QueryContext(ctx, "SELECT EventPayload FROM History WHERE InstanceID=? ORDER BY SequenceNumber", instanceID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var payload []byte
+		if err := rows.Scan(&payload); err != nil {
+			return err
+		}
+		e, err := backend.UnmarshalHistoryEvent(payload)
+		if err != nil {
+			return err
+		}
+		if start := e.GetExecutionStarted(); start != nil {
+			if start.GetWorkflowInstance().GetExecutionId().GetValue() != executionID {
+				return fmt.Errorf("%w: parent instance and committed history disagree", backend.ErrChildExecutionProvenanceRequired)
+			}
+			return nil
+		}
+	}
+	return rows.Err()
 }
 
 // Delete activities before reading their results: an activity completion that
@@ -654,6 +723,9 @@ func (be *sqliteBackend) cleanupWorkflowStateInternal(ctx context.Context, tx *s
 }
 
 func (be *sqliteBackend) AddNewWorkflowEvent(ctx context.Context, iid api.InstanceID, e *backend.HistoryEvent) error {
+	if backend.IsChildResult(e) {
+		return backend.ErrChildExecutionProvenanceRequired
+	}
 	if e == nil {
 		return errors.New("HistoryEvent must be non-nil")
 	} else if e.Timestamp == nil {
@@ -683,6 +755,9 @@ func (be *sqliteBackend) AddNewWorkflowEvent(ctx context.Context, iid api.Instan
 // delivery receipt and enqueues its event. A duplicate receipt is success and
 // deliberately does not enqueue another event.
 func (be *sqliteBackend) AddNewWorkflowEventWithExternalDelivery(ctx context.Context, iid api.InstanceID, eventName, deliveryID string, e *backend.HistoryEvent) error {
+	if backend.IsChildResult(e) {
+		return backend.ErrChildExecutionProvenanceRequired
+	}
 	if e == nil {
 		return errors.New("HistoryEvent must be non-nil")
 	} else if e.Timestamp == nil {
@@ -980,7 +1055,7 @@ func (be *sqliteBackend) getWorkflowWorkItem(ctx context.Context) (*backend.Work
 			)
 			ORDER BY I.[rowid] ASC
 			LIMIT 1
-		) RETURNING [InstanceID]`,
+		) RETURNING [InstanceID], [ExecutionID]`,
 		leaseToken,        // LockedBy for Instances table
 		newLockExpiration, // Updated LockExpiration for Instances table
 		now,               // LockExpiration for Instances table
@@ -991,8 +1066,8 @@ func (be *sqliteBackend) getWorkflowWorkItem(ctx context.Context) (*backend.Work
 		return nil, fmt.Errorf("failed to query for workflow work-items: %w", err)
 	}
 
-	var instanceID string
-	if err := row.Scan(&instanceID); err != nil {
+	var instanceID, executionID string
+	if err := row.Scan(&instanceID, &executionID); err != nil {
 		if err == sql.ErrNoRows {
 			// No new events to process
 			return nil, errNoWorkItems
@@ -1010,7 +1085,7 @@ func (be *sqliteBackend) getWorkflowWorkItem(ctx context.Context) (*backend.Work
 			ORDER BY [SequenceNumber] ASC
 			LIMIT 1000
 		)
-		RETURNING [SequenceNumber], [EventPayload], [DequeueCount]`,
+		RETURNING [SequenceNumber], [EventPayload], [DequeueCount], [ExecutionID]`,
 		leaseToken,
 		instanceID,
 		now,
@@ -1027,11 +1102,14 @@ func (be *sqliteBackend) getWorkflowWorkItem(ctx context.Context) (*backend.Work
 		event          *protos.HistoryEvent
 	}
 	dequeuedEvents := make([]dequeuedEvent, 0, 10)
+	var staleChildren []int64
+	hasChild := false
 	for events.Next() {
 		var sequenceNumber int64
 		var eventPayload []byte
 		var dequeueCount int32
-		if err := events.Scan(&sequenceNumber, &eventPayload, &dequeueCount); err != nil {
+		var generation sql.NullString
+		if err := events.Scan(&sequenceNumber, &eventPayload, &dequeueCount, &generation); err != nil {
 			return nil, fmt.Errorf("failed to read history event: %w", err)
 		}
 
@@ -1044,6 +1122,16 @@ func (be *sqliteBackend) getWorkflowWorkItem(ctx context.Context) (*backend.Work
 			return nil, err
 		}
 
+		if backend.IsChildResult(e) {
+			hasChild = true
+			if !generation.Valid || generation.String == "" {
+				return nil, backend.ErrChildExecutionProvenanceRequired
+			}
+			if generation.String != executionID {
+				staleChildren = append(staleChildren, sequenceNumber)
+				continue
+			}
+		}
 		dequeuedEvents = append(dequeuedEvents, dequeuedEvent{sequenceNumber: sequenceNumber, event: e})
 	}
 	if err := events.Close(); err != nil {
@@ -1051,6 +1139,25 @@ func (be *sqliteBackend) getWorkflowWorkItem(ctx context.Context) (*backend.Work
 	}
 	if err := events.Err(); err != nil {
 		return nil, fmt.Errorf("failed to finish reading workflow work-items: %w", err)
+	}
+	if hasChild {
+		if err := be.validateChildDestination(ctx, tx, instanceID, executionID); err != nil {
+			return nil, err
+		}
+	}
+	for _, sequence := range staleChildren {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM NewEvents WHERE InstanceID=? AND SequenceNumber=? AND LockedBy=?", instanceID, sequence, leaseToken); err != nil {
+			return nil, err
+		}
+	}
+	if len(dequeuedEvents) == 0 {
+		if _, err := tx.ExecContext(ctx, "UPDATE Instances SET LockedBy=NULL, LockExpiration=NULL WHERE InstanceID=? AND LockedBy=?", instanceID, leaseToken); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		return nil, errNoWorkItems
 	}
 	sort.Slice(dequeuedEvents, func(i, j int) bool {
 		return dequeuedEvents[i].sequenceNumber < dequeuedEvents[j].sequenceNumber

@@ -1,11 +1,21 @@
 package helpers
 
 import (
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
 	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
 )
+
+// GenerateChildWorkflowInstanceIDForExecution includes the complete action ID
+// and execution identity. The original helper remains available for legacy IDs.
+func GenerateChildWorkflowInstanceIDForExecution(parentInstanceID, executionID string, actionID int32) string {
+	input, _ := json.Marshal([]string{parentInstanceID, executionID, strconv.FormatInt(int64(actionID), 10)})
+	return parentInstanceID + ":g:" + fmt.Sprintf("%x", sha256.Sum256(input))
+}
 
 // GenerateChildWorkflowInstanceID generates a deterministic instance ID for a
 // child workflow based on the parent instance ID and the action's sequence number.

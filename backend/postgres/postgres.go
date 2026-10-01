@@ -501,6 +501,43 @@ func (be *postgresBackend) CompleteWorkflowWorkItem(ctx context.Context, wi *bac
 
 	// Save outbound workflow events
 	newEventCount := len(wi.State.GetPendingTimers()) + len(wi.State.GetPendingMessages())
+	for _, msg := range wi.State.GetPendingMessages() {
+		if backend.IsChildResult(msg.HistoryEvent) {
+			newEventCount--
+		}
+	}
+	for _, msg := range wi.State.GetPendingMessages() {
+		if !backend.IsChildResult(msg.HistoryEvent) {
+			continue
+		}
+		generation, err := backend.ChildResultExecutionID(wi.State, msg.TargetInstanceId)
+		if err != nil {
+			return err
+		}
+		payload, err := backend.MarshalHistoryEvent(msg.HistoryEvent)
+		if err != nil {
+			return err
+		}
+		// Hold the destination row through commit. CAN/purge must happen
+		// either before this comparison or after the queued result commits.
+		var current string
+		err = tx.QueryRow(ctx, "SELECT ExecutionID FROM Instances WHERE InstanceID=$1 FOR UPDATE", msg.TargetInstanceId).Scan(&current)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if err := be.validateChildDestination(ctx, tx, msg.TargetInstanceId, current); err != nil {
+			return err
+		}
+		if current != generation {
+			continue
+		}
+		if _, err := tx.Exec(ctx, "INSERT INTO NewEvents (InstanceID,EventPayload,ExecutionID) VALUES ($1,$2,$3)", msg.TargetInstanceId, payload, generation); err != nil {
+			return err
+		}
+	}
 	if newEventCount > 0 {
 		builder := strings.Builder{}
 		builder.WriteString("INSERT INTO NewEvents (InstanceID, EventPayload, VisibleTime) VALUES ")
@@ -524,17 +561,26 @@ func (be *postgresBackend) CompleteWorkflowWorkItem(ctx context.Context, wi *bac
 		}
 
 		for _, msg := range wi.State.GetPendingMessages() {
+			if backend.IsChildResult(msg.HistoryEvent) {
+				continue
+			}
 			if es := msg.HistoryEvent.GetExecutionStarted(); es != nil {
 				// Need to insert a new row into the DB
 				if _, err := be.createWorkflowInstanceInternal(ctx, msg.HistoryEvent, tx); err != nil {
 					if errors.Is(err, runtimestate.ErrDuplicateEvent) || errors.Is(err, api.ErrDuplicateInstance) {
 						// Clean up existing instance and retry
 						if cleanupErr := be.cleanupWorkflowStateInternal(ctx, tx, api.InstanceID(es.WorkflowInstance.InstanceId), true); cleanupErr != nil {
+							if es.GetParentInstance() != nil {
+								return fmt.Errorf("child instance collision: %w", err)
+							}
 							be.logger.Warnf(
 								"%v: dropping child workflow creation event because an instance with the target ID (%v) already exists.",
 								wi.InstanceID,
 								es.WorkflowInstance.InstanceId)
 						} else if _, retryErr := be.createWorkflowInstanceInternal(ctx, msg.HistoryEvent, tx); retryErr != nil {
+							if es.GetParentInstance() != nil {
+								return retryErr
+							}
 							be.logger.Warnf(
 								"%v: dropping child workflow creation event because an instance with the target ID (%v) already exists.",
 								wi.InstanceID,
@@ -593,6 +639,31 @@ func (be *postgresBackend) CompleteWorkflowWorkItem(ctx context.Context, wi *bac
 	afterWorkflowCompletionCommit()
 
 	return nil
+}
+
+func (be *postgresBackend) validateChildDestination(ctx context.Context, tx pgx.Tx, instanceID, executionID string) error {
+	rows, err := tx.Query(ctx, "SELECT EventPayload FROM History WHERE InstanceID=$1 ORDER BY SequenceNumber", instanceID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var payload []byte
+		if err := rows.Scan(&payload); err != nil {
+			return err
+		}
+		e, err := backend.UnmarshalHistoryEvent(payload)
+		if err != nil {
+			return err
+		}
+		if start := e.GetExecutionStarted(); start != nil {
+			if start.GetWorkflowInstance().GetExecutionId().GetValue() != executionID {
+				return fmt.Errorf("%w: parent instance and committed history disagree", backend.ErrChildExecutionProvenanceRequired)
+			}
+			return nil
+		}
+	}
+	return rows.Err()
 }
 
 // Taking the task rows before reading results fences concurrent completions:
@@ -807,6 +878,9 @@ func (be *postgresBackend) cleanupWorkflowStateInternal(ctx context.Context, tx 
 }
 
 func (be *postgresBackend) AddNewWorkflowEvent(ctx context.Context, iid api.InstanceID, e *backend.HistoryEvent) error {
+	if backend.IsChildResult(e) {
+		return backend.ErrChildExecutionProvenanceRequired
+	}
 	if e == nil {
 		return errors.New("HistoryEvent must be non-nil")
 	} else if e.Timestamp == nil {
@@ -836,6 +910,9 @@ func (be *postgresBackend) AddNewWorkflowEvent(ctx context.Context, iid api.Inst
 // delivery receipt and enqueues its event. A duplicate receipt is success and
 // deliberately does not enqueue another event.
 func (be *postgresBackend) AddNewWorkflowEventWithExternalDelivery(ctx context.Context, iid api.InstanceID, eventName, deliveryID string, e *backend.HistoryEvent) error {
+	if backend.IsChildResult(e) {
+		return backend.ErrChildExecutionProvenanceRequired
+	}
 	if e == nil {
 		return errors.New("HistoryEvent must be non-nil")
 	} else if e.Timestamp == nil {
@@ -1148,15 +1225,15 @@ func (be *postgresBackend) GetWorkflowWorkItem(ctx context.Context) (*backend.Wo
 			ORDER BY I.SequenceNumber ASC
 			FOR UPDATE SKIP LOCKED
 			LIMIT 1
-		) RETURNING InstanceID`,
+		) RETURNING InstanceID, ExecutionID`,
 		leaseToken,        // LockedBy for Instances table
 		newLockExpiration, // Updated LockExpiration for Instances table
 		now,               // LockExpiration for Instances table
 		now,               // VisibleTime for NewEvents table
 	)
 
-	var instanceID string
-	if err := row.Scan(&instanceID); err != nil {
+	var instanceID, executionID string
+	if err := row.Scan(&instanceID, &executionID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// No new events to process
 			return nil, errNoWorkItems
@@ -1174,7 +1251,7 @@ func (be *postgresBackend) GetWorkflowWorkItem(ctx context.Context) (*backend.Wo
 			ORDER BY SequenceNumber ASC
 			LIMIT 1000
 		)
-		RETURNING SequenceNumber, EventPayload, DequeueCount`,
+		RETURNING SequenceNumber, EventPayload, DequeueCount, ExecutionID`,
 		leaseToken,
 		instanceID,
 		now,
@@ -1191,11 +1268,14 @@ func (be *postgresBackend) GetWorkflowWorkItem(ctx context.Context) (*backend.Wo
 		event          *protos.HistoryEvent
 	}
 	dequeuedEvents := make([]dequeuedEvent, 0, 10)
+	var staleChildren []int64
+	hasChild := false
 	for events.Next() {
 		var sequenceNumber int64
 		var eventPayload []byte
 		var dequeueCount int32
-		if err := events.Scan(&sequenceNumber, &eventPayload, &dequeueCount); err != nil {
+		var generation *string
+		if err := events.Scan(&sequenceNumber, &eventPayload, &dequeueCount, &generation); err != nil {
 			return nil, fmt.Errorf("failed to read history event: %w", err)
 		}
 
@@ -1208,11 +1288,40 @@ func (be *postgresBackend) GetWorkflowWorkItem(ctx context.Context) (*backend.Wo
 			return nil, err
 		}
 
+		if backend.IsChildResult(e) {
+			hasChild = true
+			if generation == nil || *generation == "" {
+				return nil, backend.ErrChildExecutionProvenanceRequired
+			}
+			if *generation != executionID {
+				staleChildren = append(staleChildren, sequenceNumber)
+				continue
+			}
+		}
 		dequeuedEvents = append(dequeuedEvents, dequeuedEvent{sequenceNumber: sequenceNumber, event: e})
 	}
 	events.Close()
 	if err := events.Err(); err != nil {
 		return nil, fmt.Errorf("failed to finish reading workflow work-items: %w", err)
+	}
+	if hasChild {
+		if err := be.validateChildDestination(ctx, tx, instanceID, executionID); err != nil {
+			return nil, err
+		}
+	}
+	for _, sequence := range staleChildren {
+		if _, err := tx.Exec(ctx, "DELETE FROM NewEvents WHERE InstanceID=$1 AND SequenceNumber=$2 AND LockedBy=$3", instanceID, sequence, leaseToken); err != nil {
+			return nil, err
+		}
+	}
+	if len(dequeuedEvents) == 0 {
+		if _, err := tx.Exec(ctx, "UPDATE Instances SET LockedBy=NULL, LockExpiration=NULL WHERE InstanceID=$1 AND LockedBy=$2", instanceID, leaseToken); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return nil, errNoWorkItems
 	}
 	sort.Slice(dequeuedEvents, func(i, j int) bool {
 		return dequeuedEvents[i].sequenceNumber < dequeuedEvents[j].sequenceNumber
