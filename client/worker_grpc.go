@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -27,6 +28,15 @@ type workItemsStream interface {
 
 const keepaliveInterval = 30 * time.Second
 const keepaliveTimeout = 5 * time.Second
+
+// A ResourceExhausted status can originate from either a local message-size
+// check or a temporary server quota. Allow recovery, but bound redelivery of
+// work that can never fit. Only receiving actual work resets this budget.
+const workItemResourceErrorLimit = 3
+
+// ErrWorkItemStreamExhausted signals that a listener stopped after three
+// ResourceExhausted receive errors without receiving work in between.
+var ErrWorkItemStreamExhausted = errors.New("work item stream resource retry budget exhausted")
 
 func (c *TaskHubGrpcClient) startKeepaliveLoop(ctx context.Context) context.CancelFunc {
 	ctx, cancel := context.WithCancel(ctx)
@@ -56,6 +66,10 @@ func (c *TaskHubGrpcClient) StartWorkItemListener(ctx context.Context, r *task.T
 	// stop the cache janitor, active stream, and work-item contexts.
 	ctx, cancelListener := context.WithCancel(ctx)
 	executor := task.NewTaskExecutor(r)
+	maxReceiveBytes := c.workItemMaxReceiveBytes
+	if maxReceiveBytes <= 0 {
+		maxReceiveBytes = DefaultWorkItemMaxReceiveBytes
+	}
 
 	var stream workItemsStream
 	// streamCancel cancels the context of the current GetWorkItems stream. It lets
@@ -97,7 +111,7 @@ func (c *TaskHubGrpcClient) StartWorkItemListener(ctx context.Context, r *task.T
 		streamCtx, cancel := context.WithCancel(ctx)
 		streamCancel = cancel
 
-		stream, err = c.client.GetWorkItems(streamCtx, &req)
+		stream, err = c.client.GetWorkItems(streamCtx, &req, grpc.MaxCallRecvMsgSize(maxReceiveBytes))
 		if err != nil {
 			cancel()
 			return fmt.Errorf("failed to get work item stream: %w", err)
@@ -116,9 +130,14 @@ func (c *TaskHubGrpcClient) StartWorkItemListener(ctx context.Context, r *task.T
 	go func() {
 		c.logger.Info("starting background processor")
 		cancelKeepalive := c.startKeepaliveLoop(ctx)
+		var terminalErr error
+		resourceErrors := 0
 		defer func() {
 			cancelListener()
 			cancelKeepalive()
+			if terminalErr != nil && c.listenerErrorHandler != nil {
+				c.listenerErrorHandler(terminalErr)
+			}
 			c.logger.Info("stopping background processor")
 			// We must use a background context here as the stream's context is likely canceled
 			shutdownErr := executor.Shutdown(context.Background())
@@ -145,6 +164,23 @@ func (c *TaskHubGrpcClient) StartWorkItemListener(ctx context.Context, r *task.T
 				} else if grpcStatus, ok := status.FromError(err); ok {
 					c.logger.Warnf("received grpc error code %v", grpcStatus.Code().String())
 					switch grpcStatus.Code() {
+					case codes.ResourceExhausted:
+						resourceErrors++
+						if resourceErrors >= workItemResourceErrorLimit {
+							terminalErr = fmt.Errorf("%w after %d receive errors (message budget %d bytes): %w", ErrWorkItemStreamExhausted, resourceErrors, maxReceiveBytes, err)
+							c.logger.Errorf("work item listener stopped: %v", terminalErr)
+							return
+						}
+						// Release this stream's pending work before waiting to reconnect.
+						streamCancel()
+						pause := time.NewTimer(100 * time.Millisecond * time.Duration(1<<(resourceErrors-1)))
+						select {
+						case <-ctx.Done():
+							pause.Stop()
+							return
+						case <-pause.C:
+						}
+						retriable = true
 					case codes.Unavailable, codes.Canceled:
 						retriable = true
 					default:
@@ -153,6 +189,7 @@ func (c *TaskHubGrpcClient) StartWorkItemListener(ctx context.Context, r *task.T
 				}
 
 				if !retriable {
+					terminalErr = err
 					c.logger.Infof("stopping background processor, non retriable error: %v", err)
 					return
 				}
@@ -176,6 +213,9 @@ func (c *TaskHubGrpcClient) StartWorkItemListener(ctx context.Context, r *task.T
 					newInfiniteRetries(),
 				)
 				if err != nil {
+					if ctx.Err() == nil {
+						terminalErr = err
+					}
 					c.logger.Infof("stopping background processor, unable to reconnect stream: %v", err)
 					return
 				}
@@ -187,11 +227,13 @@ func (c *TaskHubGrpcClient) StartWorkItemListener(ctx context.Context, r *task.T
 			}
 
 			if orchReq := workItem.GetWorkflowRequest(); orchReq != nil {
+				resourceErrors = 0
 				// Capture this stream's cancel so the handler tears down the
 				// stream it arrived on, not a later reconnected one.
 				teardownStream := streamCancel
 				go c.processWorkflowWorkItem(ctx, executor, historyCache, orchReq, teardownStream, workItem.GetCompletionToken())
 			} else if actReq := workItem.GetActivityRequest(); actReq != nil {
+				resourceErrors = 0
 				go c.processActivityWorkItem(ctx, executor, actReq, workItem.GetCompletionToken())
 			} else {
 				c.logger.Warnf("received unknown work item type: %v", workItem)

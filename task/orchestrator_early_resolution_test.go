@@ -253,7 +253,7 @@ func Test_BufferedResolution_EarlyTaskCompleted(t *testing.T) {
 	require.NotNil(t, co, "workflow must complete using the early completion")
 	assert.Equal(t, protos.OrchestrationStatus_ORCHESTRATION_STATUS_COMPLETED, co.WorkflowStatus)
 	assert.Equal(t, `"injected"`, co.GetResult().GetValue())
-	assert.Zero(t, countActions(actions, isScheduleTask), "the resolved activity must not be dispatched")
+	assert.Equal(t, 1, countActions(actions, isScheduleTask), "the resolved schedule is emitted for recording, not dispatch")
 	assert.Empty(t, cl.warns)
 }
 
@@ -270,7 +270,7 @@ func Test_BufferedResolution_ConflictingEarlyResultsKeepFirst(t *testing.T) {
 	require.NotNil(t, co)
 	assert.Equal(t, protos.OrchestrationStatus_ORCHESTRATION_STATUS_COMPLETED, co.WorkflowStatus)
 	assert.Equal(t, `"first"`, co.GetResult().GetValue())
-	assert.Zero(t, countActions(actions, isScheduleTask))
+	assert.Equal(t, 1, countActions(actions, isScheduleTask))
 	assert.Empty(t, cl.warns)
 }
 
@@ -299,7 +299,7 @@ func Test_BufferedResolution_EarlyTaskFailed(t *testing.T) {
 	require.NotNil(t, co)
 	assert.Equal(t, protos.OrchestrationStatus_ORCHESTRATION_STATUS_FAILED, co.WorkflowStatus)
 	assert.Contains(t, co.GetFailureDetails().GetErrorMessage(), "injected failure")
-	assert.Zero(t, countActions(actions, isScheduleTask))
+	assert.Equal(t, 1, countActions(actions, isScheduleTask))
 	assert.Equal(t, "exec-x", gotExecID)
 	assert.Empty(t, cl.warns)
 }
@@ -326,9 +326,9 @@ func Test_BufferedResolution_EarlyTimerFired(t *testing.T) {
 	co := completeAction(t, actions)
 	require.NotNil(t, co)
 	assert.Equal(t, protos.OrchestrationStatus_ORCHESTRATION_STATUS_COMPLETED, co.WorkflowStatus)
-	assert.Zero(t, countActions(actions, func(a *protos.WorkflowAction) bool {
+	assert.Equal(t, 1, countActions(actions, func(a *protos.WorkflowAction) bool {
 		return a.GetCreateTimer() != nil && a.Id == 1
-	}), "the resolved timer must not be dispatched")
+	}), "the resolved timer is emitted for recording, not dispatch")
 	assert.Empty(t, cl.warns)
 }
 
@@ -357,7 +357,7 @@ func Test_BufferedResolution_EarlyChildCompleted(t *testing.T) {
 	require.NotNil(t, co)
 	assert.Equal(t, protos.OrchestrationStatus_ORCHESTRATION_STATUS_COMPLETED, co.WorkflowStatus)
 	assert.Equal(t, `"injected-child"`, co.GetResult().GetValue())
-	assert.Zero(t, countActions(actions, isCreateChild))
+	assert.Equal(t, 1, countActions(actions, isCreateChild))
 	assert.Empty(t, cl.warns)
 }
 
@@ -381,7 +381,7 @@ func Test_BufferedResolution_EarlyChildFailed(t *testing.T) {
 	co := completeAction(t, actions)
 	require.NotNil(t, co)
 	assert.Equal(t, protos.OrchestrationStatus_ORCHESTRATION_STATUS_FAILED, co.WorkflowStatus)
-	assert.Zero(t, countActions(actions, isCreateChild))
+	assert.Equal(t, 1, countActions(actions, isCreateChild))
 	assert.Empty(t, cl.warns)
 }
 
@@ -523,7 +523,7 @@ func Test_BufferedResolution_SuspensionPrecedence(t *testing.T) {
 	require.NotNil(t, co)
 	assert.Equal(t, protos.OrchestrationStatus_ORCHESTRATION_STATUS_COMPLETED, co.WorkflowStatus)
 	assert.Equal(t, `"injected"`, co.GetResult().GetValue())
-	assert.Zero(t, countActions(actions, isScheduleTask))
+	assert.Equal(t, 1, countActions(actions, isScheduleTask))
 	assert.Empty(t, cl.warns)
 }
 
@@ -571,9 +571,9 @@ func Test_BufferedResolution_EarlyFailureWithRetryPolicy(t *testing.T) {
 	// The buffered failure resolves attempt one at scheduling time and the
 	// retry wrapper immediately arms the backoff timer: the workflow blocks
 	// on the retry timer instead of completing, the failed attempt's
-	// ScheduleTask is suppressed, and the retry timer action is emitted.
+	// ScheduleTask is emitted for recording, and the retry timer action is emitted.
 	assert.Nil(t, completeAction(t, actions))
-	assert.Zero(t, countActions(actions, isScheduleTask))
+	assert.Equal(t, 1, countActions(actions, isScheduleTask))
 	assert.Equal(t, 1, countActions(actions, func(a *protos.WorkflowAction) bool {
 		return a.GetCreateTimer() != nil && a.Id == 2
 	}), "the retry backoff timer must be armed")
@@ -612,7 +612,7 @@ func Test_BufferedResolution_FanOutTwoEarlyCompletions(t *testing.T) {
 	require.NotNil(t, co)
 	assert.Equal(t, protos.OrchestrationStatus_ORCHESTRATION_STATUS_COMPLETED, co.WorkflowStatus)
 	assert.Equal(t, `"onetwo"`, co.GetResult().GetValue())
-	assert.Zero(t, countActions(actions, isScheduleTask))
+	assert.Equal(t, 2, countActions(actions, isScheduleTask))
 	assert.Empty(t, cl.warns)
 }
 
@@ -649,9 +649,7 @@ func Test_BufferedResolution_TerminatedTurnPreservesTermination(t *testing.T) {
 	assert.Empty(t, co.CarryoverEvents, "termination must not carry buffered resolutions into another run")
 	// The fork retains pending actions for backend termination processing
 	// (including child cascade). Do not import the upstream action filter.
-	for _, a := range actions {
-		assert.Nil(t, a.GetScheduleTask(), "the early-resolved activity must not be dispatched")
-	}
+	assert.Equal(t, 1, countActions(actions, isScheduleTask), "record the resolved schedule; the applier suppresses dispatch")
 	assert.Equal(t, 1, cl.warnsContaining("TaskCompleted for id 7"))
 }
 
@@ -678,30 +676,6 @@ func Test_BufferedResolution_ContinueAsNewNoCarryover(t *testing.T) {
 		assert.Nil(t, e.GetTaskCompleted(), "buffered resolutions must not be carried into the next generation")
 	}
 	assert.Equal(t, 1, cl.warnsContaining("TaskCompleted for id 5"))
-}
-
-func Test_BufferedResolution_DropShiftsSuppressedIDs(t *testing.T) {
-	ctx := newTestContext(t)
-	ctx.suppressedActionIDs = map[int32]struct{}{2: {}, 3: {}}
-	ctx.pendingActions[1] = &protos.WorkflowAction{
-		Id: 1,
-		WorkflowActionType: &protos.WorkflowAction_CreateTimer{
-			CreateTimer: &protos.CreateTimerAction{
-				FireAt: timestamppb.New(externalEventIndefiniteFireAt),
-				Origin: &protos.CreateTimerAction_ExternalEvent{
-					ExternalEvent: &protos.TimerOriginExternalEvent{Name: "e"},
-				},
-			},
-		},
-	}
-	ctx.pendingActions[2] = &protos.WorkflowAction{Id: 2}
-	ctx.pendingActions[3] = &protos.WorkflowAction{Id: 3}
-	ctx.sequenceNumber = 4
-
-	require.True(t, ctx.dropOptionalExternalEventTimerAt(1))
-
-	assert.Equal(t, map[int32]struct{}{1: {}, 2: {}}, ctx.suppressedActionIDs,
-		"suppressed ids above the dropped id must shift down with their actions")
 }
 
 func Test_CompletableTask_OnCompletedAfterCompletion(t *testing.T) {
@@ -884,7 +858,7 @@ func Test_BufferedResolution_HoldsDetachedWorkflowUntilNumberingConfirmed(t *tes
 	require.NotNil(t, co)
 	assert.Equal(t, `"done"`, co.GetResult().GetValue())
 	assert.Equal(t, 1, countActions(actions, func(a *protos.WorkflowAction) bool { return a.Id == 1 && a.GetCreateDetachedWorkflow() != nil }))
-	assert.Zero(t, countActions(actions, isScheduleTask))
+	assert.Equal(t, 1, countActions(actions, isScheduleTask))
 	assert.Empty(t, cl.warns)
 }
 

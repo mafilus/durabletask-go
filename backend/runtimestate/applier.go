@@ -23,6 +23,7 @@ import (
 
 	"github.com/mafilus/durabletask-go/api/helpers"
 	"github.com/mafilus/durabletask-go/api/protos"
+	"github.com/mafilus/durabletask-go/backend/runtimestate/dedup"
 	"github.com/mafilus/durabletask-go/internal/ptr"
 )
 
@@ -63,6 +64,10 @@ func (a *Applier) Actions(s *protos.WorkflowRuntimeState, customStatus *wrappers
 	var result ActionsResult
 	s.CustomStatus = customStatus
 	s.Stalled = nil
+
+	// Record scheduling even when an early result is already present. Dispatching
+	// that resolved work again could repeat activity effects or child creation.
+	resolved := dedup.NewForState(s)
 
 	for _, action := range actions {
 		if action.Router == nil {
@@ -239,6 +244,9 @@ func (a *Applier) Actions(s *protos.WorkflowRuntimeState, customStatus *wrappers
 				},
 				Router: action.Router,
 			})
+			if resolved.Has(dedup.KindTimer, action.Id) {
+				continue
+			}
 			// TODO cant pass trace context
 			s.PendingTimers = append(s.PendingTimers, &protos.HistoryEvent{
 				EventId:   -1,
@@ -267,6 +275,9 @@ func (a *Applier) Actions(s *protos.WorkflowRuntimeState, customStatus *wrappers
 				Router: action.Router,
 			}
 			_ = AddEvent(s, scheduledEvent)
+			if resolved.Has(dedup.KindTask, action.Id) {
+				continue
+			}
 			s.PendingTasks = append(s.PendingTasks, scheduledEvent)
 			if scheduleTask.GetHistoryPropagationScope() != protos.HistoryPropagationScope_HISTORY_PROPAGATION_SCOPE_NONE {
 				if result.OutgoingHistory == nil {
@@ -306,6 +317,9 @@ func (a *Applier) Actions(s *protos.WorkflowRuntimeState, customStatus *wrappers
 				},
 				Router: action.Router,
 			})
+			if resolved.Has(dedup.KindChild, action.Id) {
+				continue
+			}
 			startEvent := &protos.HistoryEvent{
 				EventId:   -1,
 				Timestamp: timestamppb.New(time.Now()),

@@ -24,6 +24,8 @@ type TaskHubGrpcClient struct {
 	logger                  backend.Logger
 	historyCacheConfig      workflowHistoryCacheConfig
 	statefulHistoryDisabled bool
+	workItemMaxReceiveBytes int
+	listenerErrorHandler    func(error)
 }
 
 // statefulHistoryEnabled reports whether the stateful-history optimization is active,
@@ -34,6 +36,32 @@ func (c *TaskHubGrpcClient) statefulHistoryEnabled() bool {
 
 // TaskHubGrpcClientOption configures a TaskHubGrpcClient.
 type TaskHubGrpcClientOption func(*TaskHubGrpcClient)
+
+// DefaultWorkItemMaxReceiveBytes bounds each streamed work item to 16 MiB.
+// Hosts must also configure their server's request limits for large payloads.
+const DefaultWorkItemMaxReceiveBytes = 16 << 20
+
+// WithWorkItemMaxReceiveBytes sets the worker's per-message receive budget.
+// A non-positive value keeps the default. This applies only to GetWorkItems;
+// other RPC receive limits can be set on the supplied gRPC connection.
+// Repeated ResourceExhausted receive errors stop the listener after bounded
+// retries; WithWorkItemListenerErrorHandler can observe that terminal failure.
+func WithWorkItemMaxReceiveBytes(maxBytes int) TaskHubGrpcClientOption {
+	return func(c *TaskHubGrpcClient) {
+		if maxBytes > 0 {
+			c.workItemMaxReceiveBytes = maxBytes
+		}
+	}
+}
+
+// WithWorkItemListenerErrorHandler observes a terminal background listener
+// failure after successful startup. Startup errors are returned directly by
+// StartWorkItemListener; caller cancellation is not reported. The handler runs
+// once after listener resources are canceled and before executor shutdown.
+// It must return promptly. The handler is called without holding library locks.
+func WithWorkItemListenerErrorHandler(handler func(error)) TaskHubGrpcClientOption {
+	return func(c *TaskHubGrpcClient) { c.listenerErrorHandler = handler }
+}
 
 // WithStatefulHistoryDisabled opts the worker out of the stateful-history
 // optimization: it does not advertise WORKER_CAPABILITY_STATEFUL_HISTORY, so the
@@ -75,8 +103,9 @@ func WithWorkflowHistoryCacheMaxBytes(maxBytes int64) TaskHubGrpcClientOption {
 // The gRPC connection must be to a task hub worker that understands the Durable Task gRPC protocol.
 func NewTaskHubGrpcClient(cc grpc.ClientConnInterface, logger backend.Logger, opts ...TaskHubGrpcClientOption) *TaskHubGrpcClient {
 	c := &TaskHubGrpcClient{
-		client: protos.NewTaskHubSidecarServiceClient(cc),
-		logger: logger,
+		client:                  protos.NewTaskHubSidecarServiceClient(cc),
+		logger:                  logger,
+		workItemMaxReceiveBytes: DefaultWorkItemMaxReceiveBytes,
 		// historyCacheConfig zero value (all nil) means every parameter defaults.
 	}
 	for _, opt := range opts {

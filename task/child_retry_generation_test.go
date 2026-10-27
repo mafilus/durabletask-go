@@ -17,18 +17,23 @@ func TestIndependentReviewEarlyChildFailureRetainsHistoricalRetryGroup(t *testin
 		return nil, w.CallChildWorkflow("child", WithChildWorkflowRetryPolicy(&RetryPolicy{MaxAttempts: 2, InitialRetryInterval: time.Second})).Await(nil)
 	}))
 	scheduled := &protos.HistoryEvent{EventId: 0, Timestamp: timestamppb.Now(), EventType: &protos.HistoryEvent_ChildWorkflowInstanceCreated{ChildWorkflowInstanceCreated: &protos.ChildWorkflowInstanceCreatedEvent{Name: "child", InstanceId: "instance:0000"}}}
-	for _, early := range []bool{false, true} {
-		t.Run(map[bool]string{false: "created-first", true: "failure-first"}[early], func(t *testing.T) {
-			events := []*protos.HistoryEvent{evExecutionStarted("wf"), scheduled, evChildFailed(0)}
-			if early {
-				events = []*protos.HistoryEvent{evExecutionStarted("wf"), evChildFailed(0), scheduled}
-			}
-			response, err := NewTaskExecutor(r).ExecuteWorkflow(context.Background(), "instance", nil, events, backend.ExecuteOptions{})
-			require.NoError(t, err)
-			require.Len(t, response.Actions, 1)
-			timer := response.Actions[0].GetCreateTimer()
-			require.NotNil(t, timer)
-			require.Equal(t, "instance:0000", timer.GetChildWorkflowRetry().GetInstanceId())
-		})
+	for _, patched := range []bool{false, true} {
+		for _, early := range []bool{false, true} {
+			t.Run(map[bool]string{false: "created-first", true: "failure-first"}[early], func(t *testing.T) {
+				events := []*protos.HistoryEvent{evExecutionStarted("wf"), scheduled, evChildFailed(0)}
+				if early {
+					events = []*protos.HistoryEvent{evExecutionStarted("wf"), evChildFailed(0), scheduled}
+				}
+				if patched {
+					events = append([]*protos.HistoryEvent{retryTurnStarted(retryChainPatch)}, events...)
+				}
+				response, err := NewTaskExecutor(r).ExecuteWorkflow(context.Background(), "instance", nil, events, backend.ExecuteOptions{})
+				require.NoError(t, err)
+				require.Len(t, response.Actions, 1)
+				timer := response.Actions[0].GetCreateTimer()
+				require.NotNil(t, timer)
+				require.Equal(t, "instance:0000", timer.GetChildWorkflowRetry().GetInstanceId())
+			})
+		}
 	}
 }

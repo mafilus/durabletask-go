@@ -18,6 +18,10 @@ pipelined execution, or a new public TaskProcessor interface.
 
 ## Required invariants
 
+The unreleased [October maintenance changes](october-maintenance.md) describe
+bounded work-item reception, duplicate registration rejection, and the updated
+record-without-dispatch contract for early resolutions.
+
 A resolution received before its task is registered is retained for that
 workflow replay, keyed by resolution kind and task ID. Registering the matching
 task consumes that resolution. The first resolution wins, and one task kind

@@ -77,7 +77,6 @@ type WorkflowContext struct {
 	saveBufferedExternalEvents bool
 	bufferedResolutions        map[resolutionKey]bufferedResolution
 	resolvedResolutions        map[resolutionKey]struct{}
-	suppressedActionIDs        map[int32]struct{}
 	optionalTimerIDs           map[int32]struct{}
 	logger                     backend.Logger
 	historyPatches             map[string]bool
@@ -211,7 +210,6 @@ func NewWorkflowContext(registry *TaskRegistry, id api.InstanceID, oldEvents []*
 		encounteredPatches:        make([]string, 0),
 		bufferedResolutions:       make(map[resolutionKey]bufferedResolution),
 		resolvedResolutions:       make(map[resolutionKey]struct{}),
-		suppressedActionIDs:       make(map[int32]struct{}),
 		optionalTimerIDs:          make(map[int32]struct{}),
 		logger:                    backend.DefaultLogger(),
 	}
@@ -225,7 +223,6 @@ func (ctx *WorkflowContext) start() (actions []*protos.WorkflowAction) {
 	ctx.pendingTasks = make(map[int32]*completableTask)
 	clear(ctx.bufferedResolutions)
 	clear(ctx.resolvedResolutions)
-	clear(ctx.suppressedActionIDs)
 	clear(ctx.optionalTimerIDs)
 
 	// Registered before the recover defer so it runs on both the normal exit
@@ -559,7 +556,26 @@ func (ctx *WorkflowContext) internalCallChildWorkflow(workflowName string, optio
 	return task
 }
 
+// retryChainPatch preserves the old Await-driven behavior for histories whose
+// first retry chain was scheduled before this patch. New decisions are persisted
+// through WorkflowResponse.Version, just like application IsPatched decisions.
+const retryChainPatch = "durabletask-go/retry-chain-v1"
+
 func (ctx *WorkflowContext) internalScheduleTaskWithRetries(name string, initialAttempt time.Time, schedule func(taskExecutionId string, isRetry bool) Task, policy RetryPolicy, retryCount int, taskExecutionId string, setTimerOrigin func(*protos.CreateTimerAction, string)) Task {
+	patched, decided := ctx.appliedPatches[retryChainPatch]
+	if !decided {
+		// Report this engine marker once per turn, not once per activity in
+		// the full replayed history.
+		patched = ctx.IsPatched(retryChainPatch)
+	}
+	if patched {
+		return &retryTask{ctx: ctx, name: name, initialAttempt: initialAttempt, schedule: schedule, policy: policy,
+			current: schedule(taskExecutionId, false), dispatchExecutionID: taskExecutionId, setTimerOrigin: setTimerOrigin}
+	}
+	return ctx.internalScheduleTaskWithRetriesLegacy(name, initialAttempt, schedule, policy, retryCount, taskExecutionId, setTimerOrigin)
+}
+
+func (ctx *WorkflowContext) internalScheduleTaskWithRetriesLegacy(name string, initialAttempt time.Time, schedule func(taskExecutionId string, isRetry bool) Task, policy RetryPolicy, retryCount int, taskExecutionId string, setTimerOrigin func(*protos.CreateTimerAction, string)) Task {
 	return &taskWrapper{
 		delegate: schedule(taskExecutionId, retryCount > 0),
 		onAwaitResult: func(v any, taskExecutionId string, err error) error {
@@ -584,7 +600,7 @@ func (ctx *WorkflowContext) internalScheduleTaskWithRetries(name string, initial
 				return fmt.Errorf("%v %w", timerErr, err)
 			}
 
-			t := ctx.internalScheduleTaskWithRetries(name, initialAttempt, schedule, policy, retryCount+1, taskExecutionId, setTimerOrigin)
+			t := ctx.internalScheduleTaskWithRetriesLegacy(name, initialAttempt, schedule, policy, retryCount+1, taskExecutionId, setTimerOrigin)
 			err = t.Await(v)
 			if err == nil {
 				return nil
@@ -868,9 +884,8 @@ func (ctx *WorkflowContext) bufferResolution(key resolutionKey, eventName string
 
 // consumeBufferedResolution delivers a buffered early resolution to the
 // pending entry that was just registered for (kind, id). The pending action
-// is left in place so a late scheduled event in history can still match it,
-// but it is suppressed from actions() so already resolved work is never
-// dispatched.
+// is emitted so the applier records its scheduling event. The applier
+// suppresses only dispatch when the matching resolution is already in state.
 func (ctx *WorkflowContext) consumeBufferedResolution(kind dedup.Kind, id int32) {
 	key := resolutionKey{kind: kind, id: id}
 	br, ok := ctx.bufferedResolutions[key]
@@ -878,8 +893,7 @@ func (ctx *WorkflowContext) consumeBufferedResolution(kind dedup.Kind, id int32)
 		return
 	}
 	delete(ctx.bufferedResolutions, key)
-	ctx.suppressedActionIDs[id] = struct{}{}
-	ctx.logger.Debugf("%v: delivering buffered %s to newly scheduled work; the action will not be dispatched", ctx.ID, br.desc)
+	ctx.logger.Debugf("%v: delivering buffered %s to newly scheduled work; the schedule is recorded without being dispatched", ctx.ID, br.desc)
 	// The handler cannot re-buffer on this path: the pending entry exists.
 	_ = br.redeliver()
 }
@@ -959,6 +973,17 @@ func (ctx *WorkflowContext) warnUnconsumedResolutions() {
 	}
 }
 
+// restoreActivityScheduleIdentity fills the schedule re-emitted after an early
+// resolution with the identity that resolution actually recorded. This does not
+// change TaskExecutionId's legacy public semantics on successfully completed tasks.
+func (ctx *WorkflowContext) restoreActivityScheduleIdentity(taskID int32, executionID string) {
+	if action := ctx.pendingActions[taskID]; action != nil {
+		if scheduled := action.GetScheduleTask(); scheduled != nil {
+			scheduled.TaskExecutionId = executionID
+		}
+	}
+}
+
 func (ctx *WorkflowContext) onTaskCompleted(tc *protos.TaskCompletedEvent) error {
 	taskID := tc.TaskScheduledId
 	key := resolutionKey{kind: dedup.KindTask, id: taskID}
@@ -969,6 +994,7 @@ func (ctx *WorkflowContext) onTaskCompleted(tc *protos.TaskCompletedEvent) error
 	}
 	delete(ctx.pendingTasks, taskID)
 	ctx.resolvedResolutions[key] = struct{}{}
+	ctx.restoreActivityScheduleIdentity(taskID, tc.TaskExecutionId)
 
 	if tc.Result != nil {
 		task.complete([]byte(tc.Result.Value))
@@ -989,9 +1015,10 @@ func (ctx *WorkflowContext) onTaskFailed(tf *protos.TaskFailedEvent) error {
 	delete(ctx.pendingTasks, taskID)
 	ctx.resolvedResolutions[key] = struct{}{}
 
+	ctx.restoreActivityScheduleIdentity(taskID, tf.TaskExecutionId)
 	// completing a task will resume the corresponding Await() call
-	task.fail(tf.FailureDetails)
 	task.taskExecutionId = tf.TaskExecutionId
+	task.fail(tf.FailureDetails)
 	return nil
 }
 
@@ -1320,23 +1347,6 @@ func (ctx *WorkflowContext) dropOptionalExternalEventTimerAt(atID int32) bool {
 		ctx.pendingTasks[id-1] = t
 	}
 
-	// Suppressed action ids track pendingActions entries, so they shift with
-	// them. bufferedResolutions keys are numbered by history events and must
-	// NOT be shifted: this drop exists precisely to align the current ids to
-	// the history numbering.
-	delete(ctx.suppressedActionIDs, atID)
-	suppressedIDs := make([]int32, 0, len(ctx.suppressedActionIDs))
-	for id := range ctx.suppressedActionIDs {
-		if id > atID {
-			suppressedIDs = append(suppressedIDs, id)
-		}
-	}
-	sort.Slice(suppressedIDs, func(i, j int) bool { return suppressedIDs[i] < suppressedIDs[j] })
-	for _, id := range suppressedIDs {
-		delete(ctx.suppressedActionIDs, id)
-		ctx.suppressedActionIDs[id-1] = struct{}{}
-	}
-
 	ctx.sequenceNumber--
 
 	// The shift moved pending entries onto their history numbering, so a
@@ -1363,13 +1373,6 @@ func (ctx *WorkflowContext) actions() []*protos.WorkflowAction {
 		// Terminal outcomes remain available, particularly termination and
 		// its backend cascade. Only new work can freeze provisional numbering.
 		if a.GetCompleteWorkflow() == nil && a.GetWorkflowVersionNotAvailable() == nil && ctx.actionIDProvisional(a.Id) {
-			continue
-		}
-		// Actions whose resolution was already delivered from the buffered
-		// early resolutions are withheld: the work is resolved, so it must
-		// never be dispatched. The pending action itself is retained so a
-		// late scheduled event in history can still match it.
-		if _, ok := ctx.suppressedActionIDs[a.Id]; ok {
 			continue
 		}
 		actions = append(actions, a)

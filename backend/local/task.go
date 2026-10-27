@@ -2,12 +2,17 @@ package local
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/mafilus/durabletask-go/api"
 	"github.com/mafilus/durabletask-go/api/protos"
 	"github.com/mafilus/durabletask-go/backend"
 )
+
+// ErrTaskAlreadyPending rejects a second waiter without replacing the current
+// registration. The rejected waiter owns no registry entry.
+var ErrTaskAlreadyPending = errors.New("a completion waiter is already pending for this task")
 
 type pendingWorkflow struct {
 	response *protos.WorkflowResponse
@@ -47,12 +52,23 @@ func (be *TasksBackend) CancelActivityTask(ctx context.Context, instanceID api.I
 }
 
 func (be *TasksBackend) WaitForActivityCompletion(request *protos.ActivityRequest) func(context.Context) (*protos.ActivityResponse, error) {
+	wait, err := be.RegisterActivityCompletion(request)
+	if err != nil {
+		return func(context.Context) (*protos.ActivityResponse, error) { return nil, err }
+	}
+	return wait
+}
+
+// RegisterActivityCompletion reserves the completion key before work is dispatched.
+func (be *TasksBackend) RegisterActivityCompletion(request *protos.ActivityRequest) (func(context.Context) (*protos.ActivityResponse, error), error) {
 	key := backend.GetActivityExecutionKey(request.GetWorkflowInstance().GetInstanceId(), request.GetTaskId())
 	pending := &pendingActivity{
 		response: nil,
 		complete: make(chan struct{}, 1),
 	}
-	be.pendingActivities.Store(key, pending)
+	if _, loaded := be.pendingActivities.LoadOrStore(key, pending); loaded {
+		return nil, ErrTaskAlreadyPending
+	}
 
 	return func(ctx context.Context) (*protos.ActivityResponse, error) {
 		// A canceled waiter must only remove its own attempt. Another attempt
@@ -67,7 +83,7 @@ func (be *TasksBackend) WaitForActivityCompletion(request *protos.ActivityReques
 			}
 			return pending.response, nil
 		}
-	}
+	}, nil
 }
 
 func (be *TasksBackend) CompleteWorkflowTask(ctx context.Context, response *protos.WorkflowResponse) error {
@@ -85,11 +101,22 @@ func (be *TasksBackend) CancelWorkflowTask(ctx context.Context, instanceID api.I
 }
 
 func (be *TasksBackend) WaitForWorkflowTaskCompletion(request *protos.WorkflowRequest) func(context.Context) (*protos.WorkflowResponse, error) {
+	wait, err := be.RegisterWorkflowTaskCompletion(request)
+	if err != nil {
+		return func(context.Context) (*protos.WorkflowResponse, error) { return nil, err }
+	}
+	return wait
+}
+
+// RegisterWorkflowTaskCompletion reserves the completion key before work is dispatched.
+func (be *TasksBackend) RegisterWorkflowTaskCompletion(request *protos.WorkflowRequest) (func(context.Context) (*protos.WorkflowResponse, error), error) {
 	pending := &pendingWorkflow{
 		response: nil,
 		complete: make(chan struct{}, 1),
 	}
-	be.pendingWorkflows.Store(request.GetInstanceId(), pending)
+	if _, loaded := be.pendingWorkflows.LoadOrStore(request.GetInstanceId(), pending); loaded {
+		return nil, ErrTaskAlreadyPending
+	}
 
 	return func(ctx context.Context) (*protos.WorkflowResponse, error) {
 		defer be.pendingWorkflows.CompareAndDelete(request.GetInstanceId(), pending)
@@ -102,7 +129,7 @@ func (be *TasksBackend) WaitForWorkflowTaskCompletion(request *protos.WorkflowRe
 			}
 			return pending.response, nil
 		}
-	}
+	}, nil
 }
 
 func (be *TasksBackend) deletePendingActivityTask(iid string, taskID int32, res *protos.ActivityResponse) bool {

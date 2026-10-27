@@ -545,6 +545,13 @@ func Test_Grpc_GetInstanceHistory(t *testing.T) {
 	id, err := grpcClient.ScheduleNewWorkflow(ctx, "foo")
 	require.NoError(t, err)
 
+	// History is a snapshot. Wait for all three activity turns to commit
+	// before asserting the completed workflow's event count.
+	waitCtx, cancelWait := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelWait()
+	_, err = grpcClient.WaitForWorkflowCompletion(waitCtx, id)
+	require.NoError(t, err)
+
 	resp, err := grpcClient.GetInstanceHistory(ctx, id)
 	require.NoError(t, err)
 	require.Len(t, resp.Events, 12)

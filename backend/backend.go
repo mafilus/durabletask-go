@@ -30,6 +30,16 @@ type ExternalEventDeliveryBackend interface {
 	AddNewWorkflowEventWithExternalDelivery(context.Context, api.InstanceID, string, string, *HistoryEvent) error
 }
 
+// CompletionRegistrationBackend is an optional synchronous registration
+// capability. Executors use it to reject a duplicate before dispatching work.
+// On error no waiter is registered. On success the returned function must be
+// called, including with a canceled context when dispatch fails, to release it.
+// Backends without this capability retain the legacy WaitFor methods.
+type CompletionRegistrationBackend interface {
+	RegisterWorkflowTaskCompletion(*protos.WorkflowRequest) (func(context.Context) (*protos.WorkflowResponse, error), error)
+	RegisterActivityCompletion(*protos.ActivityRequest) (func(context.Context) (*protos.ActivityResponse, error), error)
+}
+
 type (
 	HistoryEvent                  = protos.HistoryEvent
 	TaskFailureDetails            = protos.TaskFailureDetails

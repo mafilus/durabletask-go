@@ -57,14 +57,16 @@ func TestCanceledTaskWaiterRemovesOnlyItsAttempt(t *testing.T) {
 				oldWait := register()
 				var newWait func(context.Context) error
 				if replacement {
-					newWait = register()
+					rejectedWait := register()
+					require.ErrorIs(t, rejectedWait(context.Background()), ErrTaskAlreadyPending)
 				}
 				ctx, cancel := context.WithCancel(context.Background())
 				cancel()
 				require.ErrorIs(t, oldWait(ctx), context.Canceled)
 				_, exists := pending.Load(key)
-				require.Equal(t, replacement, exists)
+				require.False(t, exists)
 				if replacement {
+					newWait = register()
 					require.NoError(t, complete())
 					require.NoError(t, newWait(context.Background()))
 				}
@@ -115,5 +117,38 @@ func TestTaskCompletionRacesCancellation(t *testing.T) {
 		require.False(t, exists)
 		_, exists = be.pendingActivities.Load("workflow/42")
 		require.False(t, exists)
+	}
+}
+
+func TestDuplicateWaiterDoesNotReplaceOrRemoveOwner(t *testing.T) {
+	for _, activity := range []bool{false, true} {
+		t.Run(map[bool]string{false: "workflow", true: "activity"}[activity], func(t *testing.T) {
+			be := NewTasksBackend()
+			register := func() func(context.Context) error {
+				if activity {
+					wait := be.WaitForActivityCompletion(&protos.ActivityRequest{WorkflowInstance: &protos.WorkflowInstance{InstanceId: "same"}, TaskId: 1})
+					return func(ctx context.Context) error { _, err := wait(ctx); return err }
+				}
+				wait := be.WaitForWorkflowTaskCompletion(&protos.WorkflowRequest{InstanceId: "same"})
+				return func(ctx context.Context) error { _, err := wait(ctx); return err }
+			}
+			owner := register()
+			var wg sync.WaitGroup
+			for range 16 {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					rejected := register()
+					assert.ErrorIs(t, rejected(context.Background()), ErrTaskAlreadyPending)
+				}()
+			}
+			wg.Wait()
+			if activity {
+				require.NoError(t, be.CompleteActivityTask(context.Background(), &protos.ActivityResponse{InstanceId: "same", TaskId: 1}))
+			} else {
+				require.NoError(t, be.CompleteWorkflowTask(context.Background(), &protos.WorkflowResponse{InstanceId: "same"}))
+			}
+			require.NoError(t, owner(context.Background()), "rejected duplicates must not disturb the original registration")
+		})
 	}
 }

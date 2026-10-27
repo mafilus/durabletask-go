@@ -157,7 +157,16 @@ func (executor *grpcExecutor) ExecuteWorkflow(ctx context.Context, iid api.Insta
 		},
 	}
 
-	wait := executor.backend.WaitForWorkflowTaskCompletion(req)
+	var wait func(context.Context) (*protos.WorkflowResponse, error)
+	if registrar, ok := executor.backend.(CompletionRegistrationBackend); ok {
+		var err error
+		wait, err = registrar.RegisterWorkflowTaskCompletion(req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to register completion: %w", err)
+		}
+	} else {
+		wait = executor.backend.WaitForWorkflowTaskCompletion(req)
+	}
 
 	// Send the workflow execution work-item to the connected worker.
 	// This will block if the worker isn't listening for work items.
@@ -217,7 +226,16 @@ func (executor *grpcExecutor) ExecuteActivity(ctx context.Context, iid api.Insta
 		},
 	}
 
-	wait := executor.backend.WaitForActivityCompletion(req)
+	var wait func(context.Context) (*protos.ActivityResponse, error)
+	if registrar, ok := executor.backend.(CompletionRegistrationBackend); ok {
+		var err error
+		wait, err = registrar.RegisterActivityCompletion(req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to register completion: %w", err)
+		}
+	} else {
+		wait = executor.backend.WaitForActivityCompletion(req)
+	}
 
 	// Send the activity execution work-item to the connected worker.
 	// This will block if the worker isn't listening for work items.
