@@ -26,8 +26,10 @@ intentionally changing the pinned submodule commit.
 
 ## Building the project
 
-Version v1.2.0 requires Go 1.26.6 or newer. The authoritative minimum is declared
-in `go.mod`, which CI also uses to select Go. You can build a standalone
+Development builds require Go 1.26.10 or newer. When using the Go 1.27 series,
+use Go 1.27.3 or newer to include the same standard-library security fixes.
+The authoritative minimum is declared in `go.mod`, which CI also uses to select
+Go. You can build a standalone
 executable by running `go build` at the project root.
 
 ### Generating protobuf
