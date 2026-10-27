@@ -18,19 +18,18 @@ The project originated as a Go clone of the [.NET-based Durable Task Framework](
 
 ## Current release
 
-The current stable release is [v1.2.1](https://github.com/mafilus/durabletask-go/releases/tag/v1.2.1).
-It requires Go 1.26.6 or newer, as declared in its
-[go.mod](https://github.com/mafilus/durabletask-go/blob/v1.2.1/go.mod).
+The current stable release is [v1.2.2](https://github.com/mafilus/durabletask-go/releases/tag/v1.2.2).
+It requires Go 1.26.10 or newer, as declared in its
+[go.mod](https://github.com/mafilus/durabletask-go/blob/v1.2.2/go.mod).
 
-The development branch requires Go 1.26.10 for standard-library security fixes.
 If building with Go 1.27, use Go 1.27.3 or newer.
 
 ```bash
-go get github.com/mafilus/durabletask-go@v1.2.1
+go get github.com/mafilus/durabletask-go@v1.2.2
 ```
 
-See the [release note](docs/releases/v1.2.1.md) for upgrade instructions and
-validation evidence, including the separately triggered PostgreSQL chaos run.
+See the [release note](docs/releases/v1.2.2.md) for upgrade instructions and
+version-specific validation evidence.
 
 ## Compatibility posture
 

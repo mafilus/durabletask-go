@@ -1,6 +1,6 @@
 # October maintenance changes
 
-These unreleased changes address repeated activity execution, oversized gRPC
+Version v1.2.2 addresses repeated activity execution, oversized gRPC
 work items, overwritten completion waiters, and incomplete scheduling history.
 They adapt the upstream fixes to this fork's synchronous executor and preserve
 its early-resolution and execution-isolation protections.
